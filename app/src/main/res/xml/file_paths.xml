@@ -1,4 +1,6 @@
 <paths>
+    <!-- Private videos: only ever opened by our own player (provider is not exported, no grants handed out). -->
+    <files-path name="vault" path="vault/"/>
     <cache-path name="sample" path="sample/"/>
     <cache-path name="exports" path="exports/"/>
     <external-files-path name="saved_movies" path="Movies/"/>

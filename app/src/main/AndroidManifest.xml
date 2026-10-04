@@ -32,6 +32,8 @@
     <application
         android:name=".VideoPlayerApp"
         android:allowBackup="true"
+        android:fullBackupContent="@xml/backup_rules"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
@@ -48,6 +50,10 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+            <!-- Static "Clips" launcher shortcut; "Continue watching" is added dynamically. -->
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts"/>
         </activity>
 
         <activity
@@ -74,6 +80,14 @@
                 <data android:mimeType="application/x-mpegURL"/>
                 <data android:mimeType="application/vnd.apple.mpegurl"/>
                 <data android:mimeType="application/dash+xml"/>
+            </intent-filter>
+
+            <!-- Share sheet (Google Photos, Files...): play one or several shared videos as a playlist. -->
+            <intent-filter android:label="@string/share_target_label">
+                <action android:name="android.intent.action.SEND"/>
+                <action android:name="android.intent.action.SEND_MULTIPLE"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <data android:mimeType="video/*"/>
             </intent-filter>
 
             <!-- Network streams with a declared MIME type -->
@@ -116,7 +130,14 @@
             android:name=".ClipEditorActivity"
             android:exported="false"
             android:label="@string/clip_editor_title"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|uiMode"
             android:windowSoftInputMode="adjustResize|stateHidden"/>
+
+        <activity
+            android:name=".VaultActivity"
+            android:exported="false"
+            android:label="@string/vault_title"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|uiMode"/>
 
         <service
             android:name=".PlaybackService"

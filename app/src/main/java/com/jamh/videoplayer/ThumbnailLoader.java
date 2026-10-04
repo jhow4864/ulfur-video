@@ -49,7 +49,7 @@ public final class ThumbnailLoader {
     }
 
     @SuppressWarnings("deprecation")
-    private static Bitmap loadSync(Context context, VideoItem item) {
+    static Bitmap loadSync(Context context, VideoItem item) {
         ContentResolver cr = context.getContentResolver();
         try {
             if (Build.VERSION.SDK_INT >= 29) {

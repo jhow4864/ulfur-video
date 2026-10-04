@@ -41,6 +41,8 @@ import java.util.List;
 public class ClipsFeedActivity extends AppCompatActivity {
 
     public static final String EXTRA_START = "start";
+    /** MediaStore ids of the clips, so the feed can be rebuilt after process death. */
+    public static final String EXTRA_IDS = "clip_ids";
 
     /** Clip list handed over from the library (avoids huge intent extras). */
     static List<VideoItem> pendingClips;
@@ -55,6 +57,8 @@ public class ClipsFeedActivity extends AppCompatActivity {
     private TextView counter;
     private int current = -1;
     private boolean userPaused;
+    private boolean stoppedReleased;
+    private final java.util.concurrent.ExecutorService io = java.util.concurrent.Executors.newSingleThreadExecutor();
 
     private final Runnable progressTick = new Runnable() {
         @Override public void run() {
@@ -66,11 +70,8 @@ public class ClipsFeedActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        clips = pendingClips == null ? new ArrayList<>() : new ArrayList<>(pendingClips);
-        if (clips.isEmpty()) {
-            finish();
-            return;
-        }
+        List<VideoItem> handed = pendingClips;
+        pendingClips = null;   // don't keep a static reference to the list
         setContentView(R.layout.activity_clips_feed);
         WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
         WindowInsetsControllerCompat c = WindowCompat.getInsetsController(getWindow(), getWindow().getDecorView());
@@ -85,6 +86,36 @@ public class ClipsFeedActivity extends AppCompatActivity {
         });
         findViewById(R.id.feed_back).setOnClickListener(v -> finish());
         counter = findViewById(R.id.feed_counter);
+
+        if (handed != null && !handed.isEmpty()) {
+            setUpFeed(handed);
+            return;
+        }
+        long[] ids = getIntent().getLongArrayExtra(EXTRA_IDS);
+        if (ids == null || ids.length == 0) {
+            finish();
+            return;
+        }
+        // Process death: the static hand-over is gone, re-query the clips by id off the main thread.
+        final android.content.Context app = getApplicationContext();
+        io.execute(() -> {
+            java.util.Map<Long, VideoItem> byId = new java.util.HashMap<>();
+            for (VideoItem v : VideoRepository.all(app)) byId.put(v.id, v);
+            List<VideoItem> list = new ArrayList<>();
+            for (long id : ids) {
+                VideoItem v = byId.get(id);
+                if (v != null) list.add(v);
+            }
+            handler.post(() -> {
+                if (isDestroyed()) return;
+                if (list.isEmpty()) finish();
+                else setUpFeed(list);
+            });
+        });
+    }
+
+    private void setUpFeed(List<VideoItem> list) {
+        clips = new ArrayList<>(list);
 
         for (int i = 0; i < 2; i++) {
             players[i] = PlayerFactory.createLight(this);
@@ -116,6 +147,44 @@ public class ClipsFeedActivity extends AppCompatActivity {
     }
 
     @Override
+    protected void onStart() {
+        super.onStart();
+        if (stoppedReleased) {
+            stoppedReleased = false;
+            int pos = current;
+            boolean wasPaused = userPaused;
+            current = -1;
+            if (pos >= 0) {
+                selectPage(pos);
+                if (wasPaused) {
+                    userPaused = true;
+                    playerFor(pos).pause();
+                }
+            }
+        }
+    }
+
+    /**
+     * Frees both pooled decoders + buffers while the feed is invisible (onDestroy may come much
+     * later); onStart reloads the current clip and its neighbour.
+     */
+    @Override
+    protected void onStop() {
+        super.onStop();
+        if (players[0] == null) return;
+        for (int i = 0; i < 2; i++) {
+            players[i].stop();
+            players[i].clearMediaItems();
+            loadedPos[i] = -1;
+            if (attachedView[i] != null) {
+                View poster = ((View) attachedView[i].getParent()).findViewById(R.id.clip_poster);
+                if (poster != null) poster.setVisibility(View.VISIBLE);
+            }
+        }
+        stoppedReleased = true;
+    }
+
+    @Override
     protected void onResume() {
         super.onResume();
         if (current >= 0 && !userPaused) playerFor(current).play();
@@ -133,6 +202,7 @@ public class ClipsFeedActivity extends AppCompatActivity {
     protected void onDestroy() {
         super.onDestroy();
         handler.removeCallbacksAndMessages(null);
+        io.shutdownNow();
         for (int i = 0; i < 2; i++) {
             if (attachedView[i] != null) attachedView[i].setPlayer(null);
             if (players[i] != null) players[i].release();

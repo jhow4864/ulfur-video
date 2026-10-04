@@ -32,6 +32,7 @@ import androidx.media3.effect.StaticOverlaySettings;
 import androidx.media3.effect.TextureOverlay;
 import androidx.media3.transformer.Composition;
 import androidx.media3.transformer.EditedMediaItem;
+import androidx.media3.transformer.EditedMediaItemSequence;
 import androidx.media3.transformer.Effects;
 import androidx.media3.transformer.ExportException;
 import androidx.media3.transformer.ExportResult;
@@ -78,6 +79,8 @@ final class ClipExporter {
         boolean keepAudio = true;
         int gifWidth = 480;
         int gifFps = 15;
+        /** Display-oriented source size if the editor already knows it (0 = probe on a worker). */
+        int srcW, srcH;
 
         long durationMs() {
             return Math.max(0, endMs - startMs);
@@ -143,8 +146,22 @@ final class ClipExporter {
     // ----------------------------------------------------------------------------- MP4
 
     private void startMp4(Spec spec) {
+        if (spec.srcW > 0 && spec.srcH > 0) {
+            startMp4(spec, new int[]{spec.srcW, spec.srcH});
+            return;
+        }
+        // MediaMetadataRetriever does provider I/O (possibly a cloud download): never on main.
+        worker = new Thread(() -> {
+            int[] size = displaySize(ctx, spec.uri);
+            main.post(() -> {
+                if (!cancelled.get() && callback != null) startMp4(spec, size);
+            });
+        }, "clip-probe");
+        worker.start();
+    }
+
+    private void startMp4(Spec spec, int[] size) {
         final File out = exportFile("mp4");
-        int[] size = displaySize(ctx, spec.uri);
         List<Effect> effects = new ArrayList<>();
         int outW = size[0], outH = size[1];
         if (spec.crop != null) {
@@ -183,6 +200,11 @@ final class ClipExporter {
                 .setRemoveAudio(!spec.keepAudio)
                 .setEffects(new Effects(Collections.emptyList(), effects))
                 .build();
+        // H.264 HDR encoders are rare: tone-map HDR (e.g. Pixel 10-bit HLG) to SDR explicitly so
+        // the clip is shareable everywhere instead of depending on encoder fallback.
+        Composition composition = new Composition.Builder(new EditedMediaItemSequence.Builder(edited).build())
+                .setHdrMode(Composition.HDR_MODE_TONE_MAP_HDR_TO_SDR_USING_OPEN_GL)
+                .build();
 
         transformer = new Transformer.Builder(ctx)
                 .setVideoMimeType(MimeTypes.VIDEO_H264)
@@ -207,7 +229,7 @@ final class ClipExporter {
                     }
                 })
                 .build();
-        transformer.start(edited, out.getAbsolutePath());
+        transformer.start(composition, out.getAbsolutePath());
         main.post(progressPoll);
     }
 

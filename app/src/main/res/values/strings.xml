@@ -13,4 +13,22 @@
     <string name="banner_dismiss">Not now</string>
     <string name="default_dialog_title">Default video player</string>
     <string name="clip_editor_title">Make clip / GIF</string>
+    <string name="shortcut_clips_short">Clips</string>
+    <string name="shortcut_clips_long">Swipe through your clips</string>
+    <string name="share_target_label">Play in Video Player</string>
+    <string name="vault_title">Private videos</string>
+    <string name="vault_locked_title">Private videos are locked</string>
+    <string name="vault_locked_body">Unlock with your fingerprint, face or screen lock.</string>
+    <string name="vault_unlock">Unlock</string>
+    <string name="vault_no_lock_title">Set up a screen lock first</string>
+    <string name="vault_no_lock_body">Private videos are protected by your phone\'s screen lock or fingerprint. Add a PIN, pattern, password or fingerprint in Settings, then come back.</string>
+    <string name="vault_open_settings">Open security settings</string>
+    <string name="vault_warning">Private videos are stored only inside Video Player on this phone and aren\'t backed up. Uninstalling the app or clearing its storage permanently deletes them. Move videos out before you uninstall or switch phones.</string>
+    <string name="vault_empty">No private videos yet.\n\nIn the library, long-press a video and choose \u201cMove to Private\u201d.</string>
+    <string name="vault_hint">Tap to play · long-press for options</string>
+    <string name="vault_lock_now">Lock now</string>
+    <string name="move_to_private">Move to Private</string>
+    <string name="move_out_of_private">Move out to Movies/VideoPlayer</string>
+    <string name="delete_permanently">Delete permanently</string>
+    <string name="auto_rotate_video">Auto-rotate to match video</string>
 </resources>

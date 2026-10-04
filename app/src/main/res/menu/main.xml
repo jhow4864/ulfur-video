@@ -12,6 +12,8 @@
             </group>
         </menu>
     </item>
+    <item android:id="@+id/action_private" android:title="@string/vault_title" android:icon="@drawable/ic_lock"
+        app:iconTint="?attr/colorOnSurface" app:showAsAction="ifRoom"/>
     <item android:id="@+id/action_default_player" android:title="Set as default player" app:showAsAction="never"/>
     <item android:id="@+id/action_open_url" android:title="Open network stream…" app:showAsAction="never"/>
     <item android:id="@+id/action_refresh" android:title="Refresh" app:showAsAction="never"/>

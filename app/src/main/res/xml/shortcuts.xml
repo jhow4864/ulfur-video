@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="clips"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_clips"
+        android:shortcutShortLabel="@string/shortcut_clips_short"
+        android:shortcutLongLabel="@string/shortcut_clips_long">
+        <intent
+            android:action="com.jamh.videoplayer.action.OPEN_CLIPS"
+            android:targetPackage="com.jamh.videoplayer"
+            android:targetClass="com.jamh.videoplayer.MainActivity"/>
+    </shortcut>
+</shortcuts>

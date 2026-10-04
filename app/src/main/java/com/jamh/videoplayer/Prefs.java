@@ -30,6 +30,10 @@ public final class Prefs {
     public static boolean backgroundAudio(Context c) { return s(c).getBoolean("background_audio", false); }
     public static void setBackgroundAudio(Context c, boolean v) { s(c).edit().putBoolean("background_audio", v).apply(); }
     /** 0 = portrait or short, 1 = portrait only, 2 = short (< 3 min) only. */
+    /** Old behaviour: rotate the player to the video's orientation when it opens (default off). */
+    public static boolean autoRotateToVideo(Context c) { return s(c).getBoolean("auto_rotate_video", false); }
+    public static void setAutoRotateToVideo(Context c, boolean v) { s(c).edit().putBoolean("auto_rotate_video", v).apply(); }
+
     public static int clipsFilter(Context c) { return s(c).getInt("clips_filter", 0); }
     public static void setClipsFilter(Context c, int v) { s(c).edit().putInt("clips_filter", v).apply(); }
 

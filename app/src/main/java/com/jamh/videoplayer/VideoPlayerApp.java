@@ -10,5 +10,6 @@ public class VideoPlayerApp extends Application {
     public void onCreate() {
         super.onCreate();
         DynamicColors.applyToActivitiesIfAvailable(this);
+        VaultLock.install(this); // Private videos re-lock when the app goes to the background
     }
 }

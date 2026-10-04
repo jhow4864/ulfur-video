@@ -26,3 +26,21 @@ Previews/smoke test: `./gradlew testDebugUnitTest` (Robolectric, writes previews
 - **Make clip / GIF**: trim slider (auto-zoomed window) with ±1 frame / ±0.1 s nudges, live preview loop, crop (free/1:1/9:16/16:9), caption (position/size/colour).
   Output: MP4 via Media3 Transformer (H.264/AAC hardware encode, audio optional) or GIF (320/480/640 px, 10/15/20 fps, OPTION_CLOSEST frames → bundled median-cut + Floyd–Steinberg + LZW `GifEncoder`).
   Progress with cancel; saved to Movies/VideoPlayer or Pictures/VideoPlayer via MediaStore, then Share/Open. Warns on GIFs over 15 s.
+
+## v1.3.0 (versionCode 5)
+- **Review merge** (`/workspace/video-player-review`): patch applied (P1-1 DialogueBoost flush, P1-2 editor config changes, P1-3 deferred rebuild, P2-1/2/3),
+  plus the P0 proper fix: `MediaProbe` + four local buffer tiers sized from the probed bitrate and a byte cap (`PlayerFactory.tierForBitrate`), no main-thread I/O on open,
+  P1-4 (editor metadata off the main thread), P1-5 (decoders released in onStop), several P2s. Baseline in git (`31efb72`).
+- **Share sheet**: SEND / SEND_MULTIPLE video/* → PlayerActivity; several videos play as a playlist in share order (max 200).
+- **Launcher shortcuts**: static "Clips" (res/xml/shortcuts.xml) and a dynamic "Continue watching" with the video's thumbnail (MediaStore/file/http only).
+- **Orientation**: the player opens in the phone's current orientation and follows the system auto-rotate setting (`SCREEN_ORIENTATION_USER`).
+  Rotate button and rotation lock unchanged; menu setting "Auto-rotate to match video" (default off) restores the old behaviour.
+- **Scrub thumbnails** (`ScrubThumbnails`): local files only. A background-priority sweep (coarse-to-fine, one keyframe every max(2 s, duration/600))
+  uses `getScaledFrameAtTime` CLOSEST_SYNC (API 27+, `getFrameAtTime` + scale below that). Frames are stored in a per-video pack file in cacheDir/scrub (64 MB LRU)
+  and shown instantly from memory (nearest frame). Gaps are filled on demand once the finger rests. The sweep pauses while scrubbing and is cancelled when leaving the player.
+  Streams show only the time (centre overlay).
+- **Private videos** (`Vault`, `VaultActivity`, `MoveToPrivateFlow`, `VaultLock`, `VaultAuth`): library long-press → "Move to Private" copies into filesDir/vault,
+  verifies (byte count + SHA-256), then deletes the original (API 30+ `createDeleteRequest`, API 29 RecoverableSecurityException, ≤28 direct). If the deletion is declined, the copy is removed.
+  The lock icon opens the screen after BiometricPrompt (BIOMETRIC_WEAK | DEVICE_CREDENTIAL). It re-locks when the app goes to the background.
+  FLAG_SECURE is set on the vault screen and on private playback. Private playback has no resume points, shortcuts, PiP or background audio, and thumbnails stay in memory.
+  The vault is excluded from backup and device transfer. The screen shows storage used and warns that uninstalling or clearing data deletes the videos. "Move out" copies to Movies/VideoPlayer. Not encrypted.

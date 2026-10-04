@@ -289,6 +289,45 @@
         </LinearLayout>
     </FrameLayout>
 
+    <!-- Scrub thumbnail: positioned above the seek-bar thumb / finger while scrubbing -->
+    <LinearLayout
+        android:id="@+id/scrub_preview"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|start"
+        android:orientation="vertical"
+        android:gravity="center_horizontal"
+        android:elevation="6dp"
+        android:visibility="gone">
+        <FrameLayout
+            android:id="@+id/scrub_preview_frame"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_scrub_thumb"
+            android:padding="1.5dp">
+            <com.google.android.material.imageview.ShapeableImageView
+                android:id="@+id/scrub_preview_image"
+                android:layout_width="160dp"
+                android:layout_height="90dp"
+                android:scaleType="centerCrop"
+                app:shapeAppearanceOverlay="@style/ShapeAppearance.VideoPlayer.ScrubThumb"/>
+        </FrameLayout>
+        <TextView
+            android:id="@+id/scrub_preview_time"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:background="@drawable/bg_round_dark"
+            android:paddingStart="10dp"
+            android:paddingEnd="10dp"
+            android:paddingTop="3dp"
+            android:paddingBottom="3dp"
+            android:textColor="#FFFFFFFF"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            android:fontFeatureSettings="tnum"/>
+    </LinearLayout>
+
     <ImageButton
         android:id="@+id/btn_unlock"
         style="@style/PlayerIconButton"

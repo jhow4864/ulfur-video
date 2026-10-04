@@ -28,6 +28,7 @@ import android.view.GestureDetector;
 import android.view.MotionEvent;
 import android.view.ScaleGestureDetector;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.widget.ImageButton;
 import android.widget.ImageView;
@@ -106,7 +107,10 @@ public class PlayerActivity extends AppCompatActivity {
     private static final long SLEEP_FADE_MS = 10_000;
     private static final long SPINNER_DELAY_MS = 500;
     private static final long HIDE_DELAY_MS = 3_500;
-    private static final long HEAVY_BITRATE_BPS = 40_000_000L;
+    /** Longest we wait for the URI probe (cloud providers can be slow) before starting anyway. */
+    private static final long PROBE_TIMEOUT_MS = 1_200;
+    /** Upper bound on items taken from one share (each one is probed). */
+    private static final int MAX_SHARED_ITEMS = 200;
 
     private static final String ACTION_PIP = "com.jamh.videoplayer.PIP_CONTROL";
     private static final String EXTRA_PIP = "control";
@@ -130,6 +134,21 @@ public class PlayerActivity extends AppCompatActivity {
     private ImageView gestureIcon;
     private ProgressBar gestureProgress, spinner;
     private SeekBar seekBar;
+    // Private (vault) playback: FLAG_SECURE, no resume/recents/shortcut, no PiP/background audio
+    private boolean currentPrivate;
+    private androidx.biometric.BiometricPrompt vaultPrompt;
+    private boolean vaultAuthInProgress;
+    // Scrub thumbnails (local files only)
+    private View scrubPreview;
+    private ImageView scrubPreviewImage;
+    private View scrubPreviewFrame;
+    private TextView scrubPreviewTime;
+    @androidx.annotation.Nullable private ScrubThumbnails thumbs;
+    private Uri thumbsUri;
+    private long previewPos = -1;
+    private int previewShownIndex = -1;
+    private float previewX, previewY;
+    private boolean previewFromSeekBar;
     private AudioManager audioManager;
 
     // Current media
@@ -145,7 +164,15 @@ public class PlayerActivity extends AppCompatActivity {
 
     // Player config
     private boolean preferSoftware;
-    private boolean heavyProfile;
+    /** Local buffer tier ({@link PlayerFactory#LOCAL_TIERS}); chosen from the probed bitrate. */
+    private int bufferTier = PlayerFactory.TIER_UNKNOWN;
+    private boolean profileRebuildPending;
+    private int pendingBufferTier;
+    /** Player released in onStop (nothing visible or audible): rebuilt in onStart. */
+    private boolean releasedInStop;
+    private long stoppedPositionMs;
+    /** Incremented per handled intent so late async results for an older intent are ignored. */
+    private int intentToken;
     private float speed = 1f;
     private int aspectMode = 0;
     private float zoom = 1f;
@@ -200,8 +227,8 @@ public class PlayerActivity extends AppCompatActivity {
     private final ActivityResultLauncher<String> notificationPermission =
             registerForActivityResult(new ActivityResultContracts.RequestPermission(), granted -> {
                 if (!granted) {
-                    Toast.makeText(this, "Notifications are off: background audio will still play, "
-                            + "but controls may not show.", Toast.LENGTH_LONG).show();
+                    Toast.makeText(this, "Background audio is on. Playback controls stay available in "
+                            + "the media controls and on the lock screen.", Toast.LENGTH_LONG).show();
                 }
             });
 
@@ -265,7 +292,9 @@ public class PlayerActivity extends AppCompatActivity {
         preferSoftware = Prefs.preferSoftwareDecoder(this);
         backgroundAudio = Prefs.backgroundAudio(this);
         updateBadges();
-        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
+        // Open in whatever orientation the phone is in and follow the system auto-rotate setting
+        // (no forced landscape). "Auto-rotate to match video" in the menu restores the old behaviour.
+        applyOrientation();
         if (playerView.getSubtitleView() != null) {
             playerView.getSubtitleView().setStyle(new CaptionStyleCompat(0xFFFFFFFF, 0x00000000,
                     0x00000000, CaptionStyleCompat.EDGE_TYPE_OUTLINE, 0xFF000000, null));
@@ -275,6 +304,17 @@ public class PlayerActivity extends AppCompatActivity {
         setupControls();
         setupGestures();
         registerPipReceiver();
+        vaultPrompt = VaultAuth.create(this, new VaultAuth.Callback() {
+            @Override public void onUnlocked() {
+                vaultAuthInProgress = false;
+                uncoverPrivate();
+            }
+
+            @Override public void onFailed(boolean noScreenLock, CharSequence message) {
+                vaultAuthInProgress = false;
+                finish(); // no unlock, no private video
+            }
+        });
 
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
             @Override public void handleOnBackPressed() {
@@ -286,7 +326,20 @@ public class PlayerActivity extends AppCompatActivity {
             }
         });
 
-        handleIntent(getIntent());
+        Intent toHandle = getIntent();
+        if (savedInstanceState != null && savedInstanceState.getParcelable("cur_uri") != null) {
+            // Process death: reopen what was actually playing (after Next / auto-advance), not the
+            // launch intent; the position comes from the saved resume point.
+            Uri cur = savedInstanceState.getParcelable("cur_uri");
+            long vid = savedInstanceState.getLong("cur_video_id", -1);
+            toHandle = new Intent(Intent.ACTION_VIEW).setDataAndType(cur, savedInstanceState.getString("cur_mime"));
+            if (vid >= 0) toHandle.putExtra(EXTRA_VIDEO_ID, vid);
+            toHandle.putExtra(EXTRA_SORT, getIntent().getIntExtra(EXTRA_SORT, Sort.NAME));
+            speed = savedInstanceState.getFloat("speed", 1f);
+            aspectMode = savedInstanceState.getInt("aspect", 0);
+            btnSpeed.setText(formatSpeed(speed));
+        }
+        handleIntent(toHandle);
     }
 
     @Override
@@ -296,7 +349,7 @@ public class PlayerActivity extends AppCompatActivity {
             moveTaskToBack(true); // keep the current video; return to the library
             return;
         }
-        if (intent.getData() == null) return; // tapped the media notification
+        if (urisFromIntent(intent).isEmpty()) return; // tapped the media notification
         setIntent(intent);
         saveResume();
         handleIntent(intent);
@@ -306,6 +359,39 @@ public class PlayerActivity extends AppCompatActivity {
     protected void onStart() {
         super.onStart();
         handler.post(progressRunnable);
+        if (currentPrivate && !VaultLock.isUnlocked()) coverForUnlock();
+        if (releasedInStop) {
+            releasedInStop = false;
+            profileRebuildPending = false;
+            if (player == null && currentUri != null) {
+                // Decoders and buffers were released while stopped; come back paused where we were.
+                rebuildPlayer();
+                player.setWakeMode(isNetwork(currentUri) ? C.WAKE_MODE_NETWORK : C.WAKE_MODE_LOCAL);
+                player.setMediaItem(buildMediaItem(), stoppedPositionMs);
+                player.prepare();
+                player.setPlayWhenReady(false);
+                updateNavButtons();
+                showControls();
+            }
+            videoDisabledForBackground = false;
+        }
+        if (profileRebuildPending && player != null) {
+            profileRebuildPending = false;
+            if (pendingBufferTier != bufferTier) {
+                long pos = player.getCurrentPosition();
+                boolean pwr = player.getPlayWhenReady();
+                bufferTier = pendingBufferTier;
+                rebuildPlayer(); // fresh player: video track enabled by default
+                videoDisabledForBackground = false;
+                player.setMediaItem(buildMediaItem(), pos);
+                player.prepare();
+                player.setPlayWhenReady(pwr);
+            }
+        }
+        if (sleepEndElapsed > 0 || sleepEndOfVideo) {
+            handler.removeCallbacks(sleepTick);
+            handler.post(sleepTick);
+        }
         if (videoDisabledForBackground && player != null) {
             videoDisabledForBackground = false;
             player.setTrackSelectionParameters(player.getTrackSelectionParameters().buildUpon()
@@ -316,6 +402,10 @@ public class PlayerActivity extends AppCompatActivity {
     @Override
     protected void onPause() {
         super.onPause();
+        if (scrubbing || gestureMode != GESTURE_NONE) {
+            endGesture();
+            endScrub(); // no-op if already ended; seek-bar scrubs have gestureMode == NONE
+        }
         saveResume();
     }
 
@@ -323,9 +413,10 @@ public class PlayerActivity extends AppCompatActivity {
     protected void onStop() {
         super.onStop();
         handler.removeCallbacks(progressRunnable);
+        if (!isInPip()) stopThumbnails(); // left the player: cancel thumbnail extraction
         if (!isInPip() && player != null) {
             saveResume();
-            if (backgroundAudio && player.getPlayWhenReady() && !isFinishing()) {
+            if (backgroundAudio && !currentPrivate && player.getPlayWhenReady() && !isFinishing()) {
                 // Keep the audio going; stop decoding video while nothing is visible.
                 ensurePlaybackService();
                 videoDisabledForBackground = true;
@@ -333,8 +424,33 @@ public class PlayerActivity extends AppCompatActivity {
                         .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, true).build());
             } else {
                 player.pause();
+                if (!isFinishing()) releaseDecoders();
             }
         }
+    }
+
+    /**
+     * Frees MediaCodec instances and the (up to ~160 MB) buffer while nothing is visible or
+     * audible, e.g. when going back to the library or the Clips feed. onStart rebuilds.
+     */
+    private void releaseDecoders() {
+        if (player == null) return;
+        stoppedPositionMs = player.getCurrentPosition();
+        saveResume();
+        PlaybackService.detachAndStop(mediaSession);
+        releasePlayer();
+        releasedInStop = true;
+    }
+
+    @Override
+    protected void onSaveInstanceState(@NonNull Bundle out) {
+        super.onSaveInstanceState(out);
+        if (currentUri == null) return;
+        out.putParcelable("cur_uri", currentUri);
+        out.putLong("cur_video_id", playlistVideoId);
+        out.putString("cur_mime", currentMime);
+        out.putFloat("speed", speed);
+        out.putInt("aspect", aspectMode);
     }
 
     @Override
@@ -348,6 +464,7 @@ public class PlayerActivity extends AppCompatActivity {
         handler.removeCallbacks(sleepTick);
         PlaybackService.detachAndStop(mediaSession);
         releasePlayer();
+        stopThumbnails();
         io.shutdownNow();
     }
 
@@ -380,6 +497,10 @@ public class PlayerActivity extends AppCompatActivity {
         positionView = findViewById(R.id.position);
         durationView = findViewById(R.id.duration);
         seekBar = findViewById(R.id.seekbar);
+        scrubPreview = findViewById(R.id.scrub_preview);
+        scrubPreviewImage = findViewById(R.id.scrub_preview_image);
+        scrubPreviewFrame = findViewById(R.id.scrub_preview_frame);
+        scrubPreviewTime = findViewById(R.id.scrub_preview_time);
         btnPlay = findViewById(R.id.btn_play);
         btnPrev = findViewById(R.id.btn_prev);
         btnNext = findViewById(R.id.btn_next);
@@ -394,63 +515,219 @@ public class PlayerActivity extends AppCompatActivity {
 
     // =================================================================== intent / playlist
 
+    /** Video URIs carried by VIEW (data), SEND (EXTRA_STREAM) or SEND_MULTIPLE intents. */
+    @SuppressWarnings("deprecation")
+    static List<Uri> urisFromIntent(Intent intent) {
+        List<Uri> out = new ArrayList<>();
+        if (intent == null) return out;
+        String action = intent.getAction();
+        if (Intent.ACTION_SEND.equals(action)) {
+            Uri u = intent.getParcelableExtra(Intent.EXTRA_STREAM);
+            if (u != null) out.add(u);
+        } else if (Intent.ACTION_SEND_MULTIPLE.equals(action)) {
+            ArrayList<Uri> list = intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM);
+            if (list != null) for (Uri u : list) if (u != null) out.add(u);
+        } else if (intent.getData() != null) {
+            out.add(intent.getData());
+        }
+        if (out.isEmpty() && intent.getClipData() != null
+                && (Intent.ACTION_SEND.equals(action) || Intent.ACTION_SEND_MULTIPLE.equals(action))) {
+            android.content.ClipData cd = intent.getClipData();
+            for (int i = 0; i < cd.getItemCount(); i++) {
+                Uri u = cd.getItemAt(i).getUri();
+                if (u != null) out.add(u);
+            }
+        }
+        if (out.size() > MAX_SHARED_ITEMS) out = new ArrayList<>(out.subList(0, MAX_SHARED_ITEMS));
+        return out;
+    }
+
     private void handleIntent(Intent intent) {
-        Uri uri = intent.getData();
-        if (uri == null) {
+        List<Uri> uris = urisFromIntent(intent);
+        if (uris.isEmpty()) {
             Toast.makeText(this, "Nothing to play", Toast.LENGTH_SHORT).show();
             finish();
             return;
         }
+        boolean shared = Intent.ACTION_SEND.equals(intent.getAction())
+                || Intent.ACTION_SEND_MULTIPLE.equals(intent.getAction());
         externalSubUri = null;
         externalSubName = null;
-        currentMime = intent.getType();
+        currentMime = shared ? null : intent.getType();
         orientationChosenForVideo = false;
         playlist.clear();
         playlistIndex = -1;
+        updateNavButtons();
 
-        long id = intent.getLongExtra(EXTRA_VIDEO_ID, -1);
+        releasedInStop = false;  // the new item builds its own player; don't restore the old one
+        if (player != null) player.pause();  // old video stops while the new one resolves
+        final long id = intent.getLongExtra(EXTRA_VIDEO_ID, -1);
         final int sort = intent.getIntExtra(EXTRA_SORT, Sort.NAME);
-        VideoItem item = null;
-        if (id < 0 && !isNetwork(uri)) {
-            // Opened from another app: try to map it to a MediaStore row (fast single-row query).
-            item = VideoRepository.resolve(this, uri);
-        }
-        if (id >= 0) {
-            List<VideoItem> l = VideoRepository.query(this, android.provider.MediaStore.Video.Media._ID + "=?",
-                    new String[]{String.valueOf(id)});
-            item = l.isEmpty() ? null : l.get(0);
+        final int token = ++intentToken;
+        final Uri first = uris.get(0);
+        setPrivateMode(Vault.isVaultUri(first));
+
+        if (currentPrivate) {
+            if (!VaultLock.isUnlocked()) coverForUnlock(); // e.g. reopened from Recents after locking
+            titleView.setText(quickTitle(first));
+            final Context app = getApplicationContext();
+            io.execute(() -> {
+                // The other private videos become the playlist; nothing is looked up in MediaStore.
+                List<Vault.Entry> entries = Vault.list(app);
+                List<VideoItem> items = new ArrayList<>();
+                int start = -1;
+                for (int i = 0; i < entries.size(); i++) {
+                    Vault.Entry e = entries.get(i);
+                    Uri u;
+                    try {
+                        u = Vault.uriFor(app, e);
+                    } catch (RuntimeException ex) {
+                        continue;
+                    }
+                    String t = e.name;
+                    int dot = t.lastIndexOf('.');
+                    if (dot > 0) t = t.substring(0, dot);
+                    if (e.file.equals(first.getLastPathSegment())) start = items.size();
+                    items.add(new VideoItem(-2 - i, u, t, e.durationMs, e.size, e.addedMs / 1000, "", "", e.width, e.height));
+                }
+                final int startIndex = start;
+                handler.post(() -> {
+                    if (token != intentToken || isDestroyed()) return;
+                    if (startIndex < 0) {
+                        Toast.makeText(this, "This private video is no longer available", Toast.LENGTH_SHORT).show();
+                        finish();
+                        return;
+                    }
+                    playlist.clear();
+                    playlist.addAll(items);
+                    playlistIndex = startIndex;
+                    VideoItem v = items.get(startIndex);
+                    playlistVideoId = v.id;
+                    startMedia(v.uri, v.resumeKey(), v.title, v.bitrateBps());
+                });
+            });
+            return;
         }
 
-        if (item != null) {
-            playlistVideoId = item.id;
-            startMedia(id >= 0 ? item.uri : uri, item.resumeKey(), item.title, isHeavy(item));
-            final String bucket = item.bucketId;
-            final long vid = item.id;
-            io.execute(() -> {
-                List<VideoItem> list = VideoRepository.inBucket(getApplicationContext(), bucket);
-                Sort.videos(list, sort);
+        if (uris.size() == 1 && isNetwork(first) && id < 0) {
+            // Network stream: nothing to resolve or probe; streaming buffer profile.
+            playlistVideoId = -1;
+            String name = first.getLastPathSegment();
+            startMedia(first, first.toString(), name == null ? first.toString() : name, -1);
+            return;
+        }
+
+        titleView.setText(quickTitle(first));
+        final Context app = getApplicationContext();
+        final boolean[] started = {false};
+        // Slow provider (cloud-only file, sleeping SD card...): start with the safe tier rather
+        // than keeping the user waiting; the probe result then only updates the title.
+        final Runnable fallback = () -> {
+            if (token != intentToken || started[0] || isDestroyed()) return;
+            started[0] = true;
+            playlistVideoId = -1;
+            startMedia(first, first.toString(), quickTitle(first), -1);
+        };
+        handler.postDelayed(fallback, PROBE_TIMEOUT_MS);
+
+        io.execute(() -> {
+            // MediaStore lookups, display names and the probe all do provider I/O: never on main.
+            final VideoItem item = resolveItem(app, first, id, -1);
+            handler.post(() -> {
+                if (token != intentToken || isDestroyed()) return;
+                handler.removeCallbacks(fallback);
+                if (!started[0]) {
+                    started[0] = true;
+                    playlistVideoId = item.id;
+                    startMedia(item.uri, item.resumeKey(), item.title, item.bitrateBps());
+                } else if (first.equals(currentUri)) {
+                    currentTitle = item.title;
+                    titleView.setText(item.title);
+                }
+            });
+            if (uris.size() > 1) {
+                // Shared selection: play the videos in the order they were shared.
+                List<VideoItem> list = new ArrayList<>();
+                list.add(item);
+                for (int i = 1; i < uris.size(); i++) {
+                    if (token != intentToken) return;
+                    Uri u = uris.get(i);
+                    String type = null;
+                    try {
+                        type = app.getContentResolver().getType(u);
+                    } catch (RuntimeException ignored) {
+                    }
+                    if (type != null && !type.startsWith("video/")) continue; // e.g. photos in a mixed share
+                    list.add(resolveItem(app, u, -1, i));
+                }
                 handler.post(() -> {
-                    if (isDestroyed() || playlistVideoId != vid) return;
+                    if (token != intentToken || isDestroyed()) return;
+                    playlist.clear();
+                    playlist.addAll(list);
+                    playlistIndex = 0;
+                    for (int i = 0; i < list.size(); i++) if (list.get(i).id == playlistVideoId) playlistIndex = i;
+                    updateNavButtons();
+                    Toast.makeText(this, list.size() + " videos in this playlist", Toast.LENGTH_SHORT).show();
+                });
+            } else if (item.id >= 0) {
+                // A single MediaStore video: its folder becomes the playlist.
+                List<VideoItem> list = VideoRepository.inBucket(app, item.bucketId);
+                Sort.videos(list, sort);
+                final long vid = item.id;
+                handler.post(() -> {
+                    if (token != intentToken || isDestroyed() || playlistVideoId != vid) return;
                     playlist.clear();
                     playlist.addAll(list);
                     playlistIndex = -1;
                     for (int i = 0; i < list.size(); i++) if (list.get(i).id == vid) playlistIndex = i;
                     updateNavButtons();
                 });
-            });
-        } else {
-            playlistVideoId = -1;
-            String name = isNetwork(uri) ? uri.getLastPathSegment() : VideoRepository.displayName(this, uri);
-            if (name == null) name = uri.toString();
-            int dot = name.lastIndexOf('.');
-            if (dot > 0 && !isNetwork(uri)) name = name.substring(0, dot);
-            startMedia(uri, uri.toString(), name, false);
-        }
+            }
+        });
     }
 
-    private static boolean isHeavy(VideoItem v) {
-        if (v.durationMs <= 0 || v.sizeBytes <= 0) return false;
-        return v.sizeBytes * 8L * 1000L / v.durationMs > HEAVY_BITRATE_BPS;
+    private static String quickTitle(Uri uri) {
+        String last = uri.getLastPathSegment();
+        if (last == null || last.isEmpty() || last.matches("\\d+")) return "Video";
+        int slash = last.lastIndexOf('/');
+        if (slash >= 0) last = last.substring(slash + 1);
+        int dot = last.lastIndexOf('.');
+        return dot > 0 ? last.substring(0, dot) : last;
+    }
+
+    /**
+     * Worker thread: maps a URI to a MediaStore row when possible (keeps resume keys and folder
+     * playlists), otherwise probes size/duration/bitrate so the buffers can be sized (P0 fix:
+     * files from Photos/Files/Drive are no longer treated as "normal bitrate" blindly).
+     */
+    @androidx.annotation.WorkerThread
+    static VideoItem resolveItem(Context app, Uri uri, long mediaStoreId, int index) {
+        VideoItem ms = null;
+        if (mediaStoreId >= 0) {
+            List<VideoItem> l = VideoRepository.query(app, android.provider.MediaStore.Video.Media._ID + "=?",
+                    new String[]{String.valueOf(mediaStoreId)});
+            ms = l.isEmpty() ? null : l.get(0);
+            if (ms != null) return ms;            // library launch: play the MediaStore URI
+        } else if (!isNetwork(uri)) {
+            ms = VideoRepository.resolve(app, uri);
+            // Keep playing through the caller's URI (it carries the read grant).
+            if (ms != null) return ms.withUri(uri);
+        }
+        if (isNetwork(uri)) {
+            String n = uri.getLastPathSegment();
+            return new VideoItem(-2 - Math.max(0, index), uri, n == null ? uri.toString() : n, -1, -1, 0, "", "", 0, 0);
+        }
+        MediaProbe.Result r = MediaProbe.probe(app, uri);
+        String name = r.displayName != null ? r.displayName : VideoRepository.displayName(app, uri);
+        long bitrate = r.effectiveBitrate();
+        // VideoItem derives bitrate from size/duration; when only the container bitrate is known,
+        // synthesise a consistent size so bitrateBps() reports it.
+        long size = r.sizeBytes, dur = r.durationMs;
+        if (bitrate > 0 && (size <= 0 || dur <= 0)) {
+            dur = dur > 0 ? dur : 1000;
+            size = bitrate * dur / 8_000L;
+        }
+        return new VideoItem(-2 - Math.max(0, index), uri, name, dur, size, 0, "", "", r.width, r.height);
     }
 
     private static boolean isNetwork(Uri uri) {
@@ -468,24 +745,40 @@ public class PlayerActivity extends AppCompatActivity {
         externalSubName = null;
         currentMime = null;
         orientationChosenForVideo = false;
-        startMedia(v.uri, v.resumeKey(), v.title, isHeavy(v));
+        startMedia(v.uri, v.resumeKey(), v.title, v.bitrateBps());
         updateNavButtons();
         showControls();
     }
 
-    private void startMedia(Uri uri, String key, String title, boolean heavy) {
+    /** @param bitrateBps average bitrate of a local file (-1 = unknown → safe tier). */
+    private void startMedia(Uri uri, String key, String title, long bitrateBps) {
+        if (thumbsUri != null && !thumbsUri.equals(uri)) stopThumbnails();
         currentUri = uri;
         currentKey = key;
         currentTitle = title;
         titleView.setText(title);
         boolean local = !isNetwork(uri);
-        boolean wantHeavy = local && heavy;
-        if (player == null || wantHeavy != heavyProfile) {
-            heavyProfile = wantHeavy;
+        int wantTier = local
+                ? PlayerFactory.tierForBitrate(bitrateBps, PlayerFactory.bufferBudgetBytes())
+                : PlayerFactory.TIER_NETWORK;
+        releasedInStop = false;
+        if (player == null) {
+            bufferTier = wantTier;
             rebuildPlayer();
+        } else if (wantTier != bufferTier) {
+            if (getLifecycle().getCurrentState().isAtLeast(Lifecycle.State.STARTED)) {
+                bufferTier = wantTier;
+                rebuildPlayer();
+            } else {
+                // Background audio auto-advance: rebuilding would release the MediaSession and drop
+                // the media foreground service (can't be re-promoted from the background on 12+).
+                // Video is disabled in the background, so the buffer is audio-only; rebuild in onStart.
+                pendingBufferTier = wantTier;
+                profileRebuildPending = true;
+            }
         }
         long start = 0;
-        long[] resume = Prefs.getResume(this, key);
+        long[] resume = currentPrivate ? null : Prefs.getResume(this, key);
         if (resume != null && resume[0] > 3000 && (resume[1] <= 0 || resume[0] < resume[1] - 5000)) {
             start = resume[0];
         }
@@ -493,6 +786,7 @@ public class PlayerActivity extends AppCompatActivity {
         player.setMediaItem(buildMediaItem(), start);
         player.prepare();
         player.play();
+        if (currentPrivate && !VaultLock.isUnlocked()) player.pause(); // waits behind the unlock prompt
         droppedFrames = 0;
         if (start > 0) {
             Snackbar.make(root, "Resumed from " + Fmt.time(start), Snackbar.LENGTH_LONG)
@@ -501,12 +795,28 @@ public class PlayerActivity extends AppCompatActivity {
         }
         updateNavButtons();
         showControls();
+        if (currentPrivate) return; // private videos never become a launcher shortcut
+        final Uri u = uri;
+        final long vid = playlistVideoId;
+        final VideoItem thumb = playlistIndex >= 0 && playlistIndex < playlist.size()
+                && playlist.get(playlistIndex).id == vid ? playlist.get(playlistIndex) : null;
+        final Context app = getApplicationContext();
+        io.execute(() -> {
+            VideoItem src = thumb;
+            if (src == null && vid >= 0) {
+                List<VideoItem> l = VideoRepository.query(app, android.provider.MediaStore.Video.Media._ID + "=?",
+                        new String[]{String.valueOf(vid)});
+                src = l.isEmpty() ? null : l.get(0);
+            }
+            Shortcuts.pushContinueWatching(app, src != null ? src.uri : u, vid, title, src);
+        });
     }
 
     private MediaItem buildMediaItem() {
         MediaItem.Builder b = new MediaItem.Builder()
                 .setUri(currentUri)
-                .setMediaMetadata(new MediaMetadata.Builder().setTitle(currentTitle).build());
+                .setMediaMetadata(new MediaMetadata.Builder()
+                        .setTitle(currentPrivate ? "Private video" : currentTitle).build());
         if (isNetwork(currentUri)) {
             String path = currentUri.getPath() == null ? "" : currentUri.getPath().toLowerCase(Locale.ROOT);
             String mime = currentMime == null ? "" : currentMime.toLowerCase(Locale.ROOT);
@@ -538,7 +848,7 @@ public class PlayerActivity extends AppCompatActivity {
     private void rebuildPlayer() {
         releasePlayer();
         dialogueBoost = new DialogueBoostProcessor(Prefs.dialogueBoost(this));
-        player = PlayerFactory.create(this, preferSoftware, heavyProfile, dialogueBoost);
+        player = PlayerFactory.create(this, preferSoftware, bufferTier, dialogueBoost);
         player.addListener(playerListener);
         createSession();
         player.addAnalyticsListener(analyticsListener);
@@ -583,6 +893,7 @@ public class PlayerActivity extends AppCompatActivity {
                 handler.removeCallbacks(showSpinnerRunnable);
                 spinner.setVisibility(View.GONE);
             }
+            if (state == Player.STATE_READY) maybeStartThumbnails();
             if (state == Player.STATE_ENDED) {
                 Prefs.clearResume(PlayerActivity.this, currentKey);
                 if (sleepEndOfVideo) {
@@ -602,7 +913,8 @@ public class PlayerActivity extends AppCompatActivity {
         public void onVideoSizeChanged(@NonNull VideoSize size) {
             if (size.width <= 0 || size.height <= 0) return;
             updatePipParams();
-            if (!orientationChosenByUser && !orientationChosenForVideo) {
+            if (Prefs.autoRotateToVideo(PlayerActivity.this)
+                    && !orientationChosenByUser && !orientationChosenForVideo) {
                 orientationChosenForVideo = true;
                 portrait = size.height * 1f > size.width * size.pixelWidthHeightRatio;
                 applyOrientation();
@@ -706,6 +1018,7 @@ public class PlayerActivity extends AppCompatActivity {
         handler.removeCallbacks(showSpinnerRunnable);
         spinner.setVisibility(View.GONE);
         player.setScrubbingModeEnabled(true);
+        if (thumbs != null) thumbs.setScrubbing(true);
         scrubZone = SCRUB_NORMAL;
         scrubAccumMs = 0;
         player.setSeekParameters(SeekParameters.CLOSEST_SYNC);
@@ -756,6 +1069,7 @@ public class PlayerActivity extends AppCompatActivity {
             fastSeekExact(scrubTarget);
         }
         handler.postDelayed(hideSeekInfo, 400);
+        hideScrubPreview();
         scheduleHide();
     }
 
@@ -785,7 +1099,8 @@ public class PlayerActivity extends AppCompatActivity {
             scheduleHide();
         });
         findViewById(R.id.btn_rotate).setOnClickListener(v -> {
-            portrait = !portrait;
+            // Toggle relative to what is on screen now (the default mode follows the sensor).
+            portrait = getResources().getConfiguration().orientation != Configuration.ORIENTATION_PORTRAIT;
             orientationChosenByUser = true;
             applyOrientation();
             scheduleHide();
@@ -808,6 +1123,7 @@ public class PlayerActivity extends AppCompatActivity {
                 long target = progress * 100L;
                 scrubTo(target);
                 showSeekInfo(target, null, null);
+                showScrubPreviewAtSeekBar(scrubTarget);
             }
             @Override public void onStopTrackingTouch(SeekBar sb) {
                 endScrub();
@@ -865,7 +1181,7 @@ public class PlayerActivity extends AppCompatActivity {
     }
 
     private void setControlsVisible(boolean visible) {
-        if (isInPip()) visible = false;
+        if (isInPip() || awaitingPrivateUnlock()) visible = false;
         if (locked && visible) {
             flashUnlockButton();
             return;
@@ -926,15 +1242,36 @@ public class PlayerActivity extends AppCompatActivity {
     // =================================================================== orientation / aspect
 
     private void applyOrientation() {
-        if (rotationLocked) {
-            setRequestedOrientation(orientationChosenByUser
-                    ? (portrait ? ActivityInfo.SCREEN_ORIENTATION_PORTRAIT : ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE)
-                    : ActivityInfo.SCREEN_ORIENTATION_LOCKED);
-        } else {
-            setRequestedOrientation(portrait ? ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
-                    : ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
-        }
+        setRequestedOrientation(requestedOrientationFor(rotationLocked, orientationChosenByUser,
+                Prefs.autoRotateToVideo(this) && orientationChosenForVideo, portrait));
         updateRotationLockIcon();
+    }
+
+    /**
+     * Orientation policy:
+     * <ul>
+     *   <li>default: USER, i.e. stay in the phone's current orientation and follow the system
+     *       auto-rotate setting (if auto-rotate is off, the screen stays put);</li>
+     *   <li>rotate button: USER_PORTRAIT / USER_LANDSCAPE (manual switch, still honouring the
+     *       system setting for flipping within that orientation);</li>
+     *   <li>"Auto-rotate to match video" (opt-in): SENSOR_* from the video's aspect;</li>
+     *   <li>rotation lock: freeze the current (or manually chosen) orientation.</li>
+     * </ul>
+     */
+    static int requestedOrientationFor(boolean locked, boolean chosenByUser, boolean matchVideo, boolean portrait) {
+        if (locked) {
+            if (chosenByUser) {
+                return portrait ? ActivityInfo.SCREEN_ORIENTATION_PORTRAIT : ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE;
+            }
+            return ActivityInfo.SCREEN_ORIENTATION_LOCKED;
+        }
+        if (chosenByUser) {
+            return portrait ? ActivityInfo.SCREEN_ORIENTATION_USER_PORTRAIT : ActivityInfo.SCREEN_ORIENTATION_USER_LANDSCAPE;
+        }
+        if (matchVideo) {
+            return portrait ? ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT : ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE;
+        }
+        return ActivityInfo.SCREEN_ORIENTATION_USER;
     }
 
     private void updateRotationLockIcon() {
@@ -1057,6 +1394,7 @@ public class PlayerActivity extends AppCompatActivity {
                         target = Math.max(0, Math.min(dur, target));
                         scrubTo(target);
                         showSeekInfo(target, target - scrubStartPos, SCRUB_LABELS[zone]);
+                        showScrubPreview(scrubTarget, e2.getX(), e2.getY(), false);
                         break;
                     }
                     case GESTURE_BRIGHTNESS: {
@@ -1110,7 +1448,12 @@ public class PlayerActivity extends AppCompatActivity {
                 });
 
         gestureLayer.setOnTouchListener((v, e) -> {
-            if (isInPip()) return false;
+            int act = e.getActionMasked();
+            if (awaitingPrivateUnlock()) return true; // nothing to control until unlocked
+            if (isInPip()) {
+                if (act == MotionEvent.ACTION_UP || act == MotionEvent.ACTION_CANCEL) endGesture();
+                return false;
+            }
             scaleDetector.onTouchEvent(e);
             if (!scaleDetector.isInProgress() && gestureMode != GESTURE_ZOOM) {
                 detector.onTouchEvent(e);
@@ -1187,6 +1530,166 @@ public class PlayerActivity extends AppCompatActivity {
         seekInfo.setText(text);
         seekInfo.setVisibility(View.VISIBLE);
         handler.removeCallbacks(hideSeekInfo);
+    }
+
+    // =================================================================== private videos
+
+    private void setPrivateMode(boolean on) {
+        currentPrivate = on;
+        if (on) getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
+        else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_SECURE);
+        if (Build.VERSION.SDK_INT >= 33) setRecentsScreenshotEnabled(!on);
+        View pip = findViewById(R.id.btn_pip);
+        if (pip != null) pip.setVisibility(pipSupported() && !on ? View.VISIBLE : View.GONE);
+        updatePipParams();
+    }
+
+    boolean isPrivatePlayback() {
+        return currentPrivate;
+    }
+
+    /** Private video while the vault is locked: hide the picture, pause, ask to unlock. */
+    private void coverForUnlock() {
+        if (player != null) player.pause();
+        playerView.setVisibility(View.INVISIBLE);
+        setControlsVisible(false);
+        if (vaultAuthInProgress || vaultPrompt == null) return;
+        if (!VaultAuth.isAvailable(this)) {
+            finish();
+            return;
+        }
+        vaultAuthInProgress = true;
+        handler.post(() -> {
+            if (isFinishing() || isDestroyed()) return;
+            try {
+                VaultAuth.prompt(vaultPrompt);
+            } catch (RuntimeException e) {
+                vaultAuthInProgress = false;
+                finish();
+            }
+        });
+    }
+
+    private boolean awaitingPrivateUnlock() {
+        return currentPrivate && !VaultLock.isUnlocked();
+    }
+
+    private void uncoverPrivate() {
+        playerView.setVisibility(View.VISIBLE);
+        showControls();
+    }
+
+    // =================================================================== scrub thumbnails
+
+    /** Local videos only, once the duration is known; cached frames load from disk instantly. */
+    private void maybeStartThumbnails() {
+        if (player == null || currentUri == null || isNetwork(currentUri)) return;
+        if (thumbs != null && currentUri.equals(thumbsUri)) return;
+        long dur = player.getDuration();
+        if (dur == C.TIME_UNSET || dur <= 0 || player.isCurrentMediaItemLive()) return;
+        stopThumbnails();
+        thumbsUri = currentUri;
+        // Private videos: memory only, nothing written to the thumbnail cache.
+        thumbs = new ScrubThumbnails(this, currentUri, currentPrivate ? null : currentKey, dur);
+        thumbs.start(this::onThumbnailAvailable);
+    }
+
+    private void stopThumbnails() {
+        if (thumbs != null) thumbs.release();
+        thumbs = null;
+        thumbsUri = null;
+        previewShownIndex = -1;
+    }
+
+    private void onThumbnailAvailable(int index) {
+        if (thumbs == null || previewPos < 0 || scrubPreview.getVisibility() != View.VISIBLE) return;
+        if (index == -1 || previewShownIndex < 0 || index == thumbs.indexFor(previewPos)) {
+            showScrubPreview(previewPos, previewX, previewY, previewFromSeekBar);
+        }
+    }
+
+    /** Above the seek-bar thumb. */
+    private void showScrubPreviewAtSeekBar(long pos) {
+        int[] sb = new int[2], rt = new int[2];
+        seekBar.getLocationInWindow(sb);
+        root.getLocationInWindow(rt);
+        int max = Math.max(1, seekBar.getMax());
+        float track = seekBar.getWidth() - seekBar.getPaddingLeft() - seekBar.getPaddingRight();
+        float x = sb[0] - rt[0] + seekBar.getPaddingLeft() + track * seekBar.getProgress() / max;
+        showScrubPreview(pos, x, sb[1] - rt[1], true);
+    }
+
+    /**
+     * Frame (about 160 dp wide, rounded) with the time under it, centred on {@code x} and sitting
+     * above {@code y} (seek bar top, or the finger for swipe scrubs). Streams: nothing here, the
+     * centre indicator already shows the time.
+     */
+    private void showScrubPreview(long pos, float x, float y, boolean fromSeekBar) {
+        if (currentUri == null || isNetwork(currentUri) || isInPip()) return;
+        previewPos = pos;
+        previewX = x;
+        previewY = y;
+        previewFromSeekBar = fromSeekBar;
+        float d = getResources().getDisplayMetrics().density;
+        ScrubThumbnails.Frame f = thumbs == null ? null : thumbs.lookup(pos);
+        if (f != null) {
+            int bw = f.bitmap.getWidth(), bh = f.bitmap.getHeight();
+            int w, h;
+            if (bw >= bh) {
+                w = Math.round(160 * d);
+                h = Math.round(w * bh / (float) bw);
+            } else {
+                h = Math.round(160 * d);
+                w = Math.round(h * bw / (float) bh);
+            }
+            ViewGroup.LayoutParams lp = scrubPreviewImage.getLayoutParams();
+            if (lp.width != w || lp.height != h) {
+                lp.width = w;
+                lp.height = h;
+                scrubPreviewImage.setLayoutParams(lp);
+            }
+            if (f.index != previewShownIndex) scrubPreviewImage.setImageBitmap(f.bitmap);
+            previewShownIndex = f.index;
+            scrubPreviewFrame.setVisibility(View.VISIBLE);
+        } else {
+            previewShownIndex = -1;
+            scrubPreviewFrame.setVisibility(View.GONE); // time only until a frame exists
+        }
+        scrubPreviewTime.setText(scrubZone == SCRUB_FINE && !fromSeekBar ? Fmt.timePrecise(pos) : Fmt.time(pos));
+        scrubPreview.setVisibility(View.VISIBLE);
+        scrubPreview.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED);
+        int pw = scrubPreview.getMeasuredWidth(), ph = scrubPreview.getMeasuredHeight();
+        float margin = 8 * d;
+        float gap = (fromSeekBar ? 4 : 48) * d; // clear of the finger
+        float tx = Math.max(margin, Math.min(root.getWidth() - pw - margin, x - pw / 2f));
+        float ty = y - gap - ph;
+        if (ty < margin) ty = fromSeekBar ? margin : y + gap; // no room above: go below the finger
+        ty = Math.min(ty, Math.max(margin, root.getHeight() - ph - margin));
+        if (!fromSeekBar && seekInfo.getVisibility() == View.VISIBLE) {
+            // Swipe scrub: keep clear of the centre indicator (top-centre, 72 dp down).
+            seekInfo.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED);
+            float il = (root.getWidth() - seekInfo.getMeasuredWidth()) / 2f, ir = il + seekInfo.getMeasuredWidth();
+            float it = ((ViewGroup.MarginLayoutParams) seekInfo.getLayoutParams()).topMargin;
+            float ib = it + seekInfo.getMeasuredHeight();
+            if (tx < ir && tx + pw > il && ty < ib && ty + ph > it) {
+                float side = x >= (il + ir) / 2f ? ir + margin : il - pw - margin;
+                if (side >= margin && side + pw <= root.getWidth() - margin) {
+                    tx = side;                                  // beside the indicator
+                } else if (ib + margin + ph <= y - margin) {
+                    ty = ib + margin;                           // between indicator and finger
+                } else {
+                    ty = Math.min(Math.max(y + gap, ib + margin), Math.max(margin, root.getHeight() - ph - margin));
+                }
+            }
+        }
+        scrubPreview.setTranslationX(tx);
+        scrubPreview.setTranslationY(ty);
+    }
+
+    private void hideScrubPreview() {
+        previewPos = -1;
+        if (scrubPreview != null) scrubPreview.setVisibility(View.GONE);
+        if (thumbs != null) thumbs.setScrubbing(false);
     }
 
     // =================================================================== dialogs
@@ -1277,10 +1780,8 @@ public class PlayerActivity extends AppCompatActivity {
     private void onSubtitlePicked(Uri uri) {
         hideSystemUi();
         if (uri == null || player == null) return;
-        try {
-            getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
-        } catch (RuntimeException ignored) {
-        }
+        // The temporary grant from the picker lasts as long as this activity, which is all we need
+        // (persisting it every time would pile up grants toward the per-app limit).
         externalSubUri = uri;
         externalSubName = VideoRepository.displayName(this, uri);
         long pos = player.getCurrentPosition();
@@ -1330,10 +1831,26 @@ public class PlayerActivity extends AppCompatActivity {
         swBackground.setOnCheckedChangeListener((b, on) -> setBackgroundAudio(on));
         v.findViewById(R.id.row_background).setOnClickListener(x -> swBackground.toggle());
         swDecoder.setOnCheckedChangeListener((b, on) -> { if (on != preferSoftware) setPreferSoftware(on); });
+        MaterialSwitch swRotate = v.findViewById(R.id.switch_auto_rotate);
+        swRotate.setChecked(Prefs.autoRotateToVideo(this));
+        swRotate.setOnCheckedChangeListener((b, on) -> setAutoRotateToVideo(on));
+        v.findViewById(R.id.row_auto_rotate).setOnClickListener(x -> swRotate.toggle());
         v.findViewById(R.id.row_decoder).setOnClickListener(x -> swDecoder.toggle());
         v.findViewById(R.id.row_sleep).setOnClickListener(x -> { sheet.dismiss(); showSleepTimerDialog(); });
         v.findViewById(R.id.row_clip).setOnClickListener(x -> { if (canClip) { sheet.dismiss(); openClipEditor(); } });
         v.findViewById(R.id.row_info).setOnClickListener(x -> { sheet.dismiss(); showInfoDialog(); });
+    }
+
+    private void setAutoRotateToVideo(boolean on) {
+        Prefs.setAutoRotateToVideo(this, on);
+        if (on && player != null && !orientationChosenByUser) {
+            VideoSize vs = player.getVideoSize();
+            if (vs.width > 0 && vs.height > 0) {
+                orientationChosenForVideo = true;
+                portrait = vs.height * 1f > vs.width * vs.pixelWidthHeightRatio;
+            }
+        }
+        applyOrientation();
     }
 
     private void setDialogueBoost(boolean on) {
@@ -1500,9 +2017,8 @@ public class PlayerActivity extends AppCompatActivity {
         } else {
             remaining = sleepEndElapsed - SystemClock.elapsedRealtime();
         }
-        if (remaining <= SLEEP_FADE_MS) {
-            player.setVolume(Math.max(0f, remaining / (float) SLEEP_FADE_MS));
-        }
+        // Also restores full volume if the user seeks back out of the fade window.
+        player.setVolume(remaining <= SLEEP_FADE_MS ? Math.max(0f, remaining / (float) SLEEP_FADE_MS) : 1f);
         if (!sleepEndOfVideo && remaining <= 0) {
             player.pause();
             saveResume();
@@ -1546,8 +2062,11 @@ public class PlayerActivity extends AppCompatActivity {
         }
         sb.append("\n\nDropped frames: ").append(droppedFrames);
         sb.append("\nBuffered ahead: ").append((player.getBufferedPosition() - player.getCurrentPosition()) / 1000).append(" s");
-        sb.append("\nBuffer profile: ").append(heavyProfile ? "high-bitrate local (10 s back / 10–30 s ahead)"
-                : "30 s back / 30–120 s ahead");
+        int[] t = PlayerFactory.LOCAL_TIERS[bufferTier];
+        sb.append("\nBuffer profile: ").append(currentUri != null && isNetwork(currentUri)
+                ? "stream · 30 s back / 30–120 s ahead"
+                : "local tier " + bufferTier + " · " + t[2] / 1000 + " s back / " + t[0] / 1000 + "–" + t[1] / 1000
+                + " s ahead · capped at " + PlayerFactory.bufferBudgetBytes() / (1 << 20) + " MB");
         sb.append("\nDecoder preference: ").append(preferSoftware ? "software first" : "hardware first (auto fallback)");
         new MaterialAlertDialogBuilder(this)
                 .setTitle("Playback info")
@@ -1561,6 +2080,7 @@ public class PlayerActivity extends AppCompatActivity {
 
     private void saveResume() {
         if (player == null || currentKey == null) return;
+        if (currentPrivate) return; // no resume points / recents for private videos
         if (player.isCurrentMediaItemLive()) return;
         long dur = player.getDuration();
         long pos = scrubbing ? scrubTarget : player.getCurrentPosition();
@@ -1585,6 +2105,7 @@ public class PlayerActivity extends AppCompatActivity {
 
     private void enterPip() {
         if (!pipSupported() || player == null) return;
+        if (currentPrivate) return; // the PiP window would show a private video outside the app
         try {
             setControlsVisible(false);
             enterPictureInPictureMode(buildPipParams());
@@ -1600,8 +2121,11 @@ public class PlayerActivity extends AppCompatActivity {
             VideoSize vs = player.getVideoSize();
             if (vs.width > 0 && vs.height > 0) {
                 float ratio = vs.width * vs.pixelWidthHeightRatio / vs.height;
-                ratio = Math.max(1f / 2.39f, Math.min(2.39f, ratio));
-                b.setAspectRatio(new Rational(Math.round(ratio * 1000), 1000));
+                // Framework limits are 0.41841..2.39 (inclusive). Round inwards so the Rational
+                // never lands outside them (Math.round(0.41841 * 1000) / 1000 = 0.418 -> IAE).
+                int num = (int) Math.ceil(Math.max(0.4185f, Math.min(2.39f, ratio)) * 10_000);
+                num = Math.min(num, 23_900);
+                b.setAspectRatio(new Rational(num, 10_000));
             }
         }
         List<RemoteAction> actions = new ArrayList<>();
@@ -1615,7 +2139,10 @@ public class PlayerActivity extends AppCompatActivity {
         if (playerView.getGlobalVisibleRect(hint)) b.setSourceRectHint(hint);
         if (Build.VERSION.SDK_INT >= 31) {
             // With background audio on, leaving the app keeps audio playing instead of PiP.
-            b.setAutoEnterEnabled(player != null && player.isPlaying() && !backgroundAudio);
+            // playWhenReady (not isPlaying) so a rebuffer/seek in progress still auto-enters PiP.
+            b.setAutoEnterEnabled(player != null && player.getPlayWhenReady()
+                    && player.getPlaybackState() != Player.STATE_ENDED && !locked && !backgroundAudio
+                    && !currentPrivate);
             b.setSeamlessResizeEnabled(true);
         }
         return b.build();
@@ -1660,7 +2187,7 @@ public class PlayerActivity extends AppCompatActivity {
         super.onUserLeaveHint();
         // Android 12+ uses setAutoEnterEnabled; older versions enter PiP manually.
         if (Build.VERSION.SDK_INT >= 26 && Build.VERSION.SDK_INT < 31
-                && player != null && player.isPlaying() && !locked && !backgroundAudio) {
+                && player != null && player.isPlaying() && !locked && !backgroundAudio && !currentPrivate) {
             enterPip();
         }
     }
@@ -1674,13 +2201,15 @@ public class PlayerActivity extends AppCompatActivity {
             controlsVisible = false;
             gesturePanel.setVisibility(View.GONE);
             seekInfo.setVisibility(View.GONE);
+            hideScrubPreview();
             btnUnlock.setVisibility(View.GONE);
             setZoom(1f);
         } else {
             if (!getLifecycle().getCurrentState().isAtLeast(Lifecycle.State.STARTED)) {
-                // PiP window was dismissed.
+                // PiP window was dismissed: pause and free the decoders (onStart rebuilds).
                 if (player != null) player.pause();
                 saveResume();
+                releaseDecoders();
             } else {
                 applyAspect(false);
                 showControls();

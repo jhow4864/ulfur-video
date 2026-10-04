@@ -295,6 +295,7 @@ public class PreviewScreenshotTest {
         i.setClass(ApplicationProvider.getApplicationContext(), PlayerActivity.class);
         ActivityController<PlayerActivity> ctl = Robolectric.buildActivity(PlayerActivity.class, i).setup();
         PlayerActivity a = ctl.get();
+        TestUtil.awaitPlayer(a); // the intent is resolved off the main thread
         Field pf = PlayerActivity.class.getDeclaredField("player");
         pf.setAccessible(true);
         assertNotNull("ExoPlayer should be built", pf.get(a));

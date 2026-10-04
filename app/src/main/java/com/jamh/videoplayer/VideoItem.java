@@ -65,6 +65,19 @@ public final class VideoItem {
 
     /** Stable key used for resume positions. */
     public String resumeKey() {
-        return "ms:" + id;
+        // MediaStore rows are keyed by id; shared / "Open with" items (negative ids) by their URI.
+        return id >= 0 ? "ms:" + id : uri.toString();
+    }
+
+    /** Same item played through a different URI (e.g. the caller's granted content:// URI). */
+    public VideoItem withUri(Uri other) {
+        return new VideoItem(id, other, displayName, durationMs, sizeBytes, dateAddedSec, bucketId,
+                bucketName, width, height, orientation);
+    }
+
+    /** Average bitrate from size / duration, or -1 if unknown. */
+    public long bitrateBps() {
+        if (durationMs <= 0 || sizeBytes <= 0) return -1;
+        return sizeBytes * 8_000L / durationMs;
     }
 }

@@ -28,6 +28,14 @@ final class MediaSaver {
 
     /** Returns a content Uri suitable for ACTION_VIEW / ACTION_SEND. */
     static Uri save(Context ctx, File src, String displayName, String mime) throws IOException {
+        return save(ctx, src, displayName, mime, true);
+    }
+
+    /**
+     * @param allowAppFallback false for "move out of Private": the copy must land in shared
+     *                         storage (app-specific storage is deleted on uninstall too).
+     */
+    static Uri save(Context ctx, File src, String displayName, String mime, boolean allowAppFallback) throws IOException {
         boolean video = mime.startsWith("video/");
         if (Build.VERSION.SDK_INT >= 29) {
             ContentResolver cr = ctx.getContentResolver();
@@ -59,6 +67,9 @@ final class MediaSaver {
         File dir = new File(Environment.getExternalStoragePublicDirectory(
                 video ? Environment.DIRECTORY_MOVIES : Environment.DIRECTORY_PICTURES), FOLDER);
         boolean publicOk = (dir.isDirectory() || dir.mkdirs()) && dir.canWrite();
+        if (!publicOk && !allowAppFallback) {
+            throw new IOException("Storage permission is needed to save to Movies/" + FOLDER);
+        }
         if (!publicOk) {
             File base = ctx.getExternalFilesDir(video ? Environment.DIRECTORY_MOVIES : Environment.DIRECTORY_PICTURES);
             if (base == null) base = new File(ctx.getFilesDir(), video ? "Movies" : "Pictures");
@@ -66,7 +77,7 @@ final class MediaSaver {
             //noinspection ResultOfMethodCallIgnored
             dir.mkdirs();
         }
-        File dst = new File(dir, displayName);
+        File dst = uniqueFile(dir, displayName);
         try (InputStream in = new FileInputStream(src); OutputStream out = new FileOutputStream(dst)) {
             copy(in, out);
         }
@@ -85,5 +96,19 @@ final class MediaSaver {
         int n;
         while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
         out.flush();
+    }
+
+    /** "name.mp4", then "name (1).mp4"... so an existing file is never overwritten. */
+    static File uniqueFile(File dir, String displayName) {
+        File f = new File(dir, displayName);
+        if (!f.exists()) return f;
+        int dot = displayName.lastIndexOf('.');
+        String base = dot > 0 ? displayName.substring(0, dot) : displayName;
+        String ext = dot > 0 ? displayName.substring(dot) : "";
+        for (int i = 1; i < 1000; i++) {
+            f = new File(dir, base + " (" + i + ")" + ext);
+            if (!f.exists()) return f;
+        }
+        return new File(dir, base + " " + System.currentTimeMillis() + ext);
     }
 }

@@ -1,0 +1,8 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp" android:height="48dp" android:viewportWidth="48" android:viewportHeight="48">
+    <path android:fillColor="#FF233A5E" android:pathData="M24,0a24,24 0,1 1,0 48a24,24 0,1 1,0 -48z"/>
+    <!-- stacked portrait frames + play -->
+    <path android:fillColor="#FF7FA6E8" android:pathData="M15,15h2v18h-2z M31,15h2v18h-2z"/>
+    <path android:fillColor="#FFDDE7FF" android:pathData="M19.5,12h9a1.5,1.5 0,0 1,1.5 1.5v21a1.5,1.5 0,0 1,-1.5 1.5h-9a1.5,1.5 0,0 1,-1.5 -1.5v-21a1.5,1.5 0,0 1,1.5 -1.5z"/>
+    <path android:fillColor="#FF233A5E" android:pathData="M22,20v8l6,-4z"/>
+</vector>

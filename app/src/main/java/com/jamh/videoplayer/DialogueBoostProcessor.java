@@ -44,6 +44,7 @@ public final class DialogueBoostProcessor extends BaseAudioProcessor {
     private float attackCoef, releaseCoef, limReleaseCoef;
     private float[] frame = new float[0];
     private float[] dry = new float[0];
+    private int lastSampleRate = -1;
 
     public DialogueBoostProcessor(boolean enabled) {
         this.enabled = enabled;
@@ -63,8 +64,14 @@ public final class DialogueBoostProcessor extends BaseAudioProcessor {
         if (in.encoding != C.ENCODING_PCM_16BIT && in.encoding != C.ENCODING_PCM_FLOAT) {
             throw new UnhandledAudioFormatException(in);
         }
-        int ch = in.channelCount;
-        float sr = in.sampleRate;
+        return in; // same format out; state is (re)built in onFlush when this format becomes active
+    }
+
+    /** Builds filters/buffers for the now-active {@link #inputAudioFormat}. */
+    private void setUpForActiveFormat() {
+        int ch = inputAudioFormat.channelCount;
+        float sr = inputAudioFormat.sampleRate;
+        if (ch <= 0 || sr <= 0) return;
         peak = new Biquad[ch];
         shelf = new Biquad[ch];
         for (int c = 0; c < ch; c++) {
@@ -78,7 +85,6 @@ public final class DialogueBoostProcessor extends BaseAudioProcessor {
         wetStep = 1f / (0.060f * sr);
         frame = new float[ch];
         dry = new float[ch];
-        return in; // same format out
     }
 
     private static float coef(float sampleRate, float seconds) {
@@ -162,6 +168,15 @@ public final class DialogueBoostProcessor extends BaseAudioProcessor {
 
     @Override
     protected void onFlush() {
+        // BaseAudioProcessor only switches inputAudioFormat to the configured format in flush();
+        // until then queueInput() still receives old-format data, so per-channel state must not
+        // be resized in onConfigure() (stereo -> 5.1 change = ArrayIndexOutOfBounds on the
+        // playback thread).
+        if (peak.length != inputAudioFormat.channelCount || frame.length != inputAudioFormat.channelCount
+                || lastSampleRate != inputAudioFormat.sampleRate) {
+            setUpForActiveFormat();
+            lastSampleRate = inputAudioFormat.sampleRate;
+        }
         for (Biquad b : peak) b.reset();
         for (Biquad b : shelf) b.reset();
         envelope = 0f;
@@ -173,6 +188,9 @@ public final class DialogueBoostProcessor extends BaseAudioProcessor {
     protected void onReset() {
         peak = new Biquad[0];
         shelf = new Biquad[0];
+        frame = new float[0];
+        dry = new float[0];
+        lastSampleRate = -1;
     }
 
     static float dbToLin(float db) {

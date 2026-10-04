@@ -63,6 +63,7 @@ public class MainActivity extends AppCompatActivity implements LibraryAdapter.Li
     private final Handler main = new Handler(Looper.getMainLooper());
 
     private List<VideoItem> allVideos = new ArrayList<>();
+    private boolean openFeedWhenLoaded;
     private int tab = TAB_VIDEOS;
     private String openFolderId;     // non-null when browsing inside a folder
     private String openFolderName;
@@ -74,6 +75,8 @@ public class MainActivity extends AppCompatActivity implements LibraryAdapter.Li
     private View defaultBanner;
     /** Set when we sent the user to Settings or the "Open with" dialog; re-checked in onResume. */
     private boolean pendingDefaultCheck;
+
+    private final MoveToPrivateFlow moveToPrivate = new MoveToPrivateFlow(this, this::refresh);
 
     private final ActivityResultLauncher<String[]> permissionLauncher =
             registerForActivityResult(new ActivityResultContracts.RequestMultiplePermissions(), r -> {
@@ -123,6 +126,10 @@ public class MainActivity extends AppCompatActivity implements LibraryAdapter.Li
             openFolderName = savedInstanceState.getString("folderName");
             query = savedInstanceState.getString("query", "");
             pendingDefaultCheck = savedInstanceState.getBoolean("pendingDefaultCheck", false);
+        } else if (Shortcuts.ACTION_OPEN_CLIPS.equals(getIntent().getAction())) {
+            // Static "Clips" launcher shortcut: Clips tab, then straight into the swipe feed.
+            tab = TAB_CLIPS;
+            openFeedWhenLoaded = true;
         }
 
         tabs.addTab(tabs.newTab().setText(R.string.tab_videos), tab == TAB_VIDEOS);
@@ -168,6 +175,31 @@ public class MainActivity extends AppCompatActivity implements LibraryAdapter.Li
                 }
             }
         });
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        if (Shortcuts.ACTION_OPEN_CLIPS.equals(intent.getAction())) {
+            openFolderId = null;
+            TabLayout.Tab t = tabs.getTabAt(TAB_CLIPS);
+            if (t != null) t.select();
+            if (!allVideos.isEmpty()) openFirstClip();
+            else openFeedWhenLoaded = true;
+        }
+    }
+
+    /** Opens the swipe feed at the first clip matching the current Clips filter (if any). */
+    private void openFirstClip() {
+        int filter = Prefs.clipsFilter(this);
+        List<VideoItem> clips = new ArrayList<>();
+        for (VideoItem v : allVideos) if (v.matchesClipFilter(filter)) clips.add(v);
+        if (clips.isEmpty()) {
+            Toast.makeText(this, "No clips yet: portrait or short videos show up here", Toast.LENGTH_LONG).show();
+            return;
+        }
+        Sort.videos(clips, sort);
+        onClipClick(clips.get(0));
     }
 
     @Override
@@ -250,6 +282,10 @@ public class MainActivity extends AppCompatActivity implements LibraryAdapter.Li
                 if (isDestroyed()) return;
                 allVideos = list;
                 render();
+                if (openFeedWhenLoaded) {
+                    openFeedWhenLoaded = false;
+                    openFirstClip();
+                }
             });
         });
     }
@@ -352,6 +388,18 @@ public class MainActivity extends AppCompatActivity implements LibraryAdapter.Li
     }
 
     @Override
+    public void onVideoLongClick(VideoItem item, View anchor) {
+        if (item.id < 0) return;
+        android.widget.PopupMenu pm = new android.widget.PopupMenu(this, anchor);
+        pm.getMenu().add(0, 1, 0, R.string.move_to_private);
+        pm.setOnMenuItemClickListener(mi -> {
+            moveToPrivate.start(item);
+            return true;
+        });
+        pm.show();
+    }
+
+    @Override
     public void onClipClick(VideoItem clip) {
         List<VideoItem> clips = new ArrayList<>();
         int filter = Prefs.clipsFilter(this);
@@ -365,6 +413,9 @@ public class MainActivity extends AppCompatActivity implements LibraryAdapter.Li
         ClipsFeedActivity.pendingClips = clips;
         Intent i = new Intent(this, ClipsFeedActivity.class);
         i.putExtra(ClipsFeedActivity.EXTRA_START, start);
+        long[] ids = new long[clips.size()];
+        for (int k = 0; k < ids.length; k++) ids[k] = clips.get(k).id;
+        i.putExtra(ClipsFeedActivity.EXTRA_IDS, ids);
         startActivity(i);
     }
 
@@ -433,6 +484,9 @@ public class MainActivity extends AppCompatActivity implements LibraryAdapter.Li
             Prefs.setSort(this, sort);
             item.setChecked(true);
             render();
+            return true;
+        } else if (id == R.id.action_private) {
+            startActivity(new Intent(this, VaultActivity.class));
             return true;
         } else if (id == R.id.action_refresh) {
             refresh();

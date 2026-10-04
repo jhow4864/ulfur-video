@@ -37,42 +37,68 @@ import java.util.List;
 @OptIn(markerClass = UnstableApi.class)
 public final class PlayerFactory {
 
-    // Requested buffer profile (used for network streams, and local files of normal bitrate).
+    // Requested buffer profile (network streams; local files when it fits the memory budget).
     static final int MIN_BUFFER_MS = 30_000;
     static final int MAX_BUFFER_MS = 120_000;
     static final int BUFFER_FOR_PLAYBACK_MS = 1_500;
     static final int BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS = 3_000;
     static final int BACK_BUFFER_MS = 30_000;
 
-    // Memory-safe profile for very high bitrate local files (e.g. 4K60 camera footage > 40 Mbit/s).
-    // The allocator lives on the Java heap, so 30 s back + 30 s forward of 80 Mbit/s video would
-    // approach the 512 MB large-heap limit. Local disk reads are near-instant, so less is needed.
-    static final int HEAVY_MIN_BUFFER_MS = 10_000;
-    static final int HEAVY_MAX_BUFFER_MS = 30_000;
-    static final int HEAVY_BACK_BUFFER_MS = 10_000;
+    /**
+     * Local-playback buffer tiers, chosen from the file's bitrate so that forward + back buffer
+     * fit the heap budget: {min, max, back} in ms. Tier 0 is the full anti-stutter profile.
+     * The allocator lives on the Java heap, so 30 s back + 120 s forward of 80 Mbit/s 4K60 footage
+     * (~1.5 GB) is impossible; local reads are near-instant, so less buffer costs nothing.
+     */
+    static final int[][] LOCAL_TIERS = {
+            {30_000, 120_000, 30_000},   // 0: needs 150 s of budget (e.g. ≤ 6.8 Mbit/s with 128 MB)
+            {20_000, 60_000, 15_000},    // 1: needs 75 s
+            {10_000, 30_000, 10_000},    // 2: needs 40 s  (typical 1080p/4K30 phone video)
+            {5_000, 15_000, 3_000},      // 3: very high or unknown bitrate; the byte cap does the rest
+    };
+    static final int TIER_NETWORK = 0;
+    static final int TIER_UNKNOWN = 3;
 
     private PlayerFactory() {}
 
-    public static ExoPlayer create(Context context, boolean preferSoftwareVideo, boolean heavyLocal) {
-        return create(context, preferSoftwareVideo, heavyLocal, null);
+    /** Heap budget for the whole media buffer (forward + back): maxMemory / 4, 48..160 MB. */
+    static int bufferBudgetBytes() {
+        long q = Runtime.getRuntime().maxMemory() / 4;
+        return (int) Math.max(48L << 20, Math.min(160L << 20, q));
     }
 
-    public static ExoPlayer create(Context context, boolean preferSoftwareVideo, boolean heavyLocal,
+    /** Picks the largest local tier whose forward + back duration fits the budget at this bitrate. */
+    static int tierForBitrate(long bitrateBps, long budgetBytes) {
+        if (bitrateBps <= 0) return TIER_UNKNOWN;
+        double seconds = budgetBytes * 8.0 / bitrateBps;
+        for (int t = 0; t < LOCAL_TIERS.length - 1; t++) {
+            if (seconds >= (LOCAL_TIERS[t][1] + LOCAL_TIERS[t][2]) / 1000.0) return t;
+        }
+        return LOCAL_TIERS.length - 1;
+    }
+
+    public static ExoPlayer create(Context context, boolean preferSoftwareVideo, int localTier) {
+        return create(context, preferSoftwareVideo, localTier, null);
+    }
+
+    public static ExoPlayer create(Context context, boolean preferSoftwareVideo, int localTier,
                                    DialogueBoostProcessor dialogueBoost) {
-        int min = heavyLocal ? HEAVY_MIN_BUFFER_MS : MIN_BUFFER_MS;
-        int max = heavyLocal ? HEAVY_MAX_BUFFER_MS : MAX_BUFFER_MS;
-        int back = heavyLocal ? HEAVY_BACK_BUFFER_MS : BACK_BUFFER_MS;
+        int[] t = LOCAL_TIERS[Math.max(0, Math.min(LOCAL_TIERS.length - 1, localTier))];
 
         DefaultLoadControl loadControl = new DefaultLoadControl.Builder()
                 .setBufferDurationsMsForStreaming(MIN_BUFFER_MS, MAX_BUFFER_MS,
                         BUFFER_FOR_PLAYBACK_MS, BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS)
-                .setBufferDurationsMsForLocalPlayback(min, max,
+                .setBufferDurationsMsForLocalPlayback(t[0], t[1],
                         BUFFER_FOR_PLAYBACK_MS, BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS)
                 .setPrioritizeTimeOverSizeThresholdsForStreaming(true)
-                .setPrioritizeTimeOverSizeThresholdsForLocalPlayback(true)
-                // Keep 30 s behind the playhead (from the previous keyframe) so short rewinds
-                // and backwards scrubbing are served from memory instead of reloading.
-                .setBackBuffer(back, /* retainBackBufferFromKeyframe= */ true)
+                // Local: the byte cap always wins, so a mis-probed or unknown bitrate can never
+                // fill the heap (the back buffer counts toward the cap as well).
+                .setPrioritizeTimeOverSizeThresholdsForLocalPlayback(false)
+                .setTargetBufferBytes(bufferBudgetBytes())
+                // Keep some seconds behind the playhead (from the previous keyframe) so short
+                // rewinds and backwards scrubbing are served from memory instead of reloading.
+                .setBackBuffer(localTier == TIER_NETWORK ? BACK_BUFFER_MS : t[2],
+                        /* retainBackBufferFromKeyframe= */ true)
                 .build();
 
         DefaultRenderersFactory renderersFactory = new DefaultRenderersFactory(context) {

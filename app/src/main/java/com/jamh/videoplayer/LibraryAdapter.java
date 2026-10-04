@@ -21,6 +21,10 @@ public class LibraryAdapter extends RecyclerView.Adapter<LibraryAdapter.Holder> 
         void onVideoClick(VideoItem item);
         void onFolderClick(Folder folder);
         void onClipClick(VideoItem clip);
+
+        /** Long-press on a video or clip: options menu (Move to Private...). */
+        default void onVideoLongClick(VideoItem item, View anchor) {
+        }
     }
 
     private final List<Object> items = new ArrayList<>();
@@ -80,6 +84,10 @@ public class LibraryAdapter extends RecyclerView.Adapter<LibraryAdapter.Holder> 
             h.duration.setText(Fmt.time(v.durationMs));
             ThumbnailLoader.load(h.thumb, v);
             h.itemView.setOnClickListener(x -> listener.onClipClick(v));
+            h.itemView.setOnLongClickListener(x -> {
+                listener.onVideoLongClick(v, x);
+                return true;
+            });
         } else if (o instanceof VideoItem) {
             VideoItem v = (VideoItem) o;
             h.title.setText(v.title);
@@ -101,6 +109,10 @@ public class LibraryAdapter extends RecyclerView.Adapter<LibraryAdapter.Holder> 
                 h.resume.setVisibility(View.GONE);
             }
             h.itemView.setOnClickListener(x -> listener.onVideoClick(v));
+            h.itemView.setOnLongClickListener(x -> {
+                listener.onVideoLongClick(v, x);
+                return true;
+            });
         } else {
             Folder f = (Folder) o;
             h.title.setText(f.name);
@@ -117,6 +129,8 @@ public class LibraryAdapter extends RecyclerView.Adapter<LibraryAdapter.Holder> 
                 h.thumb.setImageDrawable(null);
             }
             h.itemView.setOnClickListener(x -> listener.onFolderClick(f));
+            h.itemView.setOnLongClickListener(null);
+            h.itemView.setLongClickable(false);
         }
     }
 

@@ -88,6 +88,10 @@ public class ClipEditorActivity extends AppCompatActivity {
     private View mp4Options, gifOptions;
 
     private long durationMs;
+    private boolean durationKnown;
+    private boolean metadataLoaded;
+    private final java.util.concurrent.ExecutorService metaExecutor =
+            java.util.concurrent.Executors.newSingleThreadExecutor();
     /** The trim slider shows a zoomed window around the selection so long videos stay precise. */
     private long winStart, winEnd;
     private TextView windowText;
@@ -161,8 +165,8 @@ public class ClipEditorActivity extends AppCompatActivity {
         toolbar.setSubtitle(spec.title);
 
         durationMs = getIntent().getLongExtra(EXTRA_DURATION_MS, 0);
-        readMetadata(uri);
-        if (durationMs <= 0) durationMs = 10_000;
+        durationKnown = durationMs > 0;
+        if (durationMs <= 0) durationMs = 10_000;   // placeholder until metadata / player READY
         long pos = Math.max(0, getIntent().getLongExtra(EXTRA_POSITION_MS, 0));
         spec.startMs = Math.min(pos, Math.max(0, durationMs - MIN_CLIP_MS));
         spec.endMs = Math.min(durationMs, spec.startMs + DEFAULT_CLIP_MS);
@@ -181,7 +185,54 @@ public class ClipEditorActivity extends AppCompatActivity {
         playerView.setOnClickListener(v -> setLoopPlaying(!loopPlaying));
         overlay.setTextSpec(spec);
         updateTexts();
+        setLoading(true);
         initPlayer();
+        loadMetadataAsync(uri);
+    }
+
+    /**
+     * MediaMetadataRetriever does provider I/O, which for a cloud-backed content:// URI can mean
+     * a multi-second download: run it on a worker and show a loading state meanwhile (P1-4).
+     */
+    private void loadMetadataAsync(Uri uri) {
+        final android.content.Context app = getApplicationContext();
+        metaExecutor.execute(() -> {
+            final long[] meta = readMetadata(app, uri); // {durationMs, width, height} display-oriented
+            handler.post(() -> {
+                if (isDestroyed()) return;
+                if (meta[1] > 0 && meta[2] > 0) {
+                    videoW = (int) meta[1];
+                    videoH = (int) meta[2];
+                    overlay.setVideoAspect(videoW / (float) videoH);
+                }
+                if (!durationKnown && meta[0] > 0) applyDuration(meta[0]);
+                metadataLoaded = true;
+                setLoading(false);
+                updateTexts();
+            });
+        });
+    }
+
+    private void applyDuration(long d) {
+        durationKnown = true;
+        durationMs = d;
+        spec.endMs = Math.min(spec.endMs, durationMs);
+        spec.startMs = Math.min(spec.startMs, Math.max(0, spec.endMs - MIN_CLIP_MS));
+        setupRange();
+        updateTexts();
+    }
+
+    private void setLoading(boolean loading) {
+        View bar = findViewById(R.id.editor_loading);
+        if (bar != null) bar.setVisibility(loading ? View.VISIBLE : View.GONE);
+        exportButton.setEnabled(!loading);
+        if (loading) exportButton.setText("Reading video…");
+        else exportButton.setText(spec.gif ? "Export GIF" : "Export MP4");
+    }
+
+    @VisibleForTesting
+    boolean isMetadataLoaded() {
+        return metadataLoaded;
     }
 
     @Override
@@ -191,16 +242,17 @@ public class ClipEditorActivity extends AppCompatActivity {
         out.putLong("end", spec.endMs);
     }
 
-    private void readMetadata(Uri uri) {
+    @androidx.annotation.WorkerThread
+    static long[] readMetadata(android.content.Context ctx, Uri uri) {
+        long[] out = {0, 0, 0};
         MediaMetadataRetriever mmr = new MediaMetadataRetriever();
         try {
-            mmr.setDataSource(this, uri);
-            if (durationMs <= 0) durationMs = parse(mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION));
-            int w = (int) parse(mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH));
-            int h = (int) parse(mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT));
+            mmr.setDataSource(ctx, uri);
+            out[0] = parse(mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION));
+            long w = parse(mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH));
+            long h = parse(mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT));
             long rot = parse(mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION));
-            if (rot == 90 || rot == 270) { videoW = h; videoH = w; } else { videoW = w; videoH = h; }
-            if (videoW > 0 && videoH > 0) overlay.setVideoAspect(videoW / (float) videoH);
+            if (rot == 90 || rot == 270) { out[1] = h; out[2] = w; } else { out[1] = w; out[2] = h; }
         } catch (RuntimeException ignored) {
             // Unknown container or a provider without seekable access: rely on the player instead.
         } finally {
@@ -209,6 +261,7 @@ public class ClipEditorActivity extends AppCompatActivity {
             } catch (Exception ignored) {
             }
         }
+        return out;
     }
 
     private static long parse(@Nullable String s) {
@@ -243,11 +296,12 @@ public class ClipEditorActivity extends AppCompatActivity {
             public void onPlaybackStateChanged(int state) {
                 if (state == Player.STATE_READY && player != null) {
                     long d = player.getDuration();
-                    if (d > 0 && Math.abs(d - durationMs) > 500) {
-                        durationMs = d;
-                        spec.endMs = Math.min(spec.endMs, durationMs);
-                        setupRange();
-                        updateTexts();
+                    if (d > 0 && (!durationKnown || Math.abs(d - durationMs) > 500)) applyDuration(d);
+                    if (!metadataLoaded) {
+                        // The player got there first (metadata probe still running): editing is
+                        // fine now; the exporter probes the size itself if still unknown.
+                        metadataLoaded = true;
+                        setLoading(false);
                     }
                 } else if (state == Player.STATE_ENDED && loopPlaying && player != null) {
                     player.seekTo(spec.startMs);
@@ -535,7 +589,7 @@ public class ClipEditorActivity extends AppCompatActivity {
             warningText.setText("GIFs longer than 15 s get large (≈ " + Fmt.size(bytes)
                     + "). Consider a shorter range, a smaller size, or an MP4 clip.");
         }
-        exportButton.setText(spec.gif ? "Export GIF" : "Export MP4");
+        if (metadataLoaded) exportButton.setText(spec.gif ? "Export GIF" : "Export MP4");
     }
 
     // ------------------------------------------------------------------ export
@@ -606,6 +660,7 @@ public class ClipEditorActivity extends AppCompatActivity {
             @Override
             public void onError(String message) {
                 finishExport();
+                if (isFinishing() || isDestroyed()) return;
                 new MaterialAlertDialogBuilder(ClipEditorActivity.this)
                         .setTitle("Export failed").setMessage(message)
                         .setPositiveButton(android.R.string.ok, null).show();
@@ -625,6 +680,7 @@ public class ClipEditorActivity extends AppCompatActivity {
         c.crop = spec.crop == null ? null : new RectF(spec.crop);
         c.text = spec.text; c.textPosition = spec.textPosition; c.textSize = spec.textSize; c.textColor = spec.textColor;
         c.gif = spec.gif; c.keepAudio = spec.keepAudio; c.gifWidth = spec.gifWidth; c.gifFps = spec.gifFps;
+        c.srcW = videoW; c.srcH = videoH;
         return c;
     }
 
@@ -638,7 +694,7 @@ public class ClipEditorActivity extends AppCompatActivity {
     }
 
     private void showDone(Uri uri, String mime, long bytes) {
-        if (isFinishing()) return;
+        if (isFinishing() || isDestroyed()) return;
         String where = mime.startsWith("video/") ? "Movies/VideoPlayer" : "Pictures/VideoPlayer";
         new MaterialAlertDialogBuilder(this)
                 .setTitle(mime.startsWith("video/") ? "Clip saved" : "GIF saved")
@@ -667,18 +723,24 @@ public class ClipEditorActivity extends AppCompatActivity {
     @Override
     protected void onStop() {
         super.onStop();
+        handler.removeCallbacks(loopTick);   // no 30 ms ticks while invisible
         if (player != null) player.pause();
     }
 
     @Override
     protected void onStart() {
         super.onStart();
-        if (player != null && loopPlaying && exporter == null) player.play();
+        if (player != null) {
+            handler.removeCallbacks(loopTick);
+            handler.post(loopTick);
+            if (loopPlaying && exporter == null) player.play();
+        }
     }
 
     @Override
     protected void onDestroy() {
         handler.removeCallbacksAndMessages(null);
+        metaExecutor.shutdownNow();
         if (exporter != null) exporter.cancel();
         if (progressDialog != null) progressDialog.dismiss();
         if (player != null) {

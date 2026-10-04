@@ -70,7 +70,9 @@ public class FeaturePreviewTest {
     private ActivityController<PlayerActivity> launchPlayer() {
         Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse("file:///sdcard/Movies/Brighton%20beach%20sunset.mp4"));
         i.setClass(ApplicationProvider.getApplicationContext(), PlayerActivity.class);
-        return Robolectric.buildActivity(PlayerActivity.class, i).setup();
+        ActivityController<PlayerActivity> ctl = Robolectric.buildActivity(PlayerActivity.class, i).setup();
+        TestUtil.awaitPlayer(ctl.get()); // the intent is resolved off the main thread
+        return ctl;
     }
 
     /** Player with a stand-in video frame and visible controls (no real decoding under Robolectric). */
