@@ -1,0 +1,16 @@
+<resources>
+    <string name="app_name">Video Player</string>
+    <string name="tab_videos">Videos</string>
+    <string name="tab_folders">Folders</string>
+    <string name="tab_clips">Clips</string>
+    <string name="search_hint">Search videos</string>
+    <string name="permission_needed">Video Player needs access to your videos to show your library.</string>
+    <string name="allow_access">Allow access</string>
+    <string name="no_videos">No videos found</string>
+    <string name="banner_title">Make Video Player your default?</string>
+    <string name="banner_text">Open videos from Files and other apps straight in Video Player.</string>
+    <string name="banner_setup">Set up</string>
+    <string name="banner_dismiss">Not now</string>
+    <string name="default_dialog_title">Default video player</string>
+    <string name="clip_editor_title">Make clip / GIF</string>
+</resources>

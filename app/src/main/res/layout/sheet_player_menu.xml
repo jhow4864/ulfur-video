@@ -1,0 +1,93 @@
+<androidx.core.widget.NestedScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingBottom="16dp">
+
+        <com.google.android.material.bottomsheet.BottomSheetDragHandleView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"/>
+
+        <!-- Night mode / Dialogue -->
+        <LinearLayout
+            android:id="@+id/row_dialogue"
+            style="@style/MenuRow">
+            <ImageView style="@style/MenuRowIcon" android:src="@drawable/ic_night"/>
+            <LinearLayout style="@style/MenuRowTexts">
+                <TextView style="@style/MenuRowTitle" android:text="Night mode / Dialogue"/>
+                <TextView style="@style/MenuRowSubtitle" android:text="Boosts speech (1–4 kHz) and evens out quiet dialogue and loud action"/>
+            </LinearLayout>
+            <com.google.android.material.materialswitch.MaterialSwitch
+                android:id="@+id/switch_dialogue"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"/>
+        </LinearLayout>
+
+        <!-- Background audio -->
+        <LinearLayout
+            android:id="@+id/row_background"
+            style="@style/MenuRow">
+            <ImageView style="@style/MenuRowIcon" android:src="@drawable/ic_headphones"/>
+            <LinearLayout style="@style/MenuRowTexts">
+                <TextView style="@style/MenuRowTitle" android:text="Background audio"/>
+                <TextView style="@style/MenuRowSubtitle" android:text="Keep playing when you leave the app or turn the screen off"/>
+            </LinearLayout>
+            <com.google.android.material.materialswitch.MaterialSwitch
+                android:id="@+id/switch_background"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"/>
+        </LinearLayout>
+
+        <!-- Sleep timer -->
+        <LinearLayout
+            android:id="@+id/row_sleep"
+            style="@style/MenuRow">
+            <ImageView style="@style/MenuRowIcon" android:src="@drawable/ic_timer"/>
+            <LinearLayout style="@style/MenuRowTexts">
+                <TextView style="@style/MenuRowTitle" android:text="Sleep timer"/>
+                <TextView android:id="@+id/sleep_value" style="@style/MenuRowSubtitle" android:text="Off"/>
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- Clip / GIF -->
+        <LinearLayout
+            android:id="@+id/row_clip"
+            style="@style/MenuRow">
+            <ImageView style="@style/MenuRowIcon" android:src="@drawable/ic_cut"/>
+            <LinearLayout style="@style/MenuRowTexts">
+                <TextView style="@style/MenuRowTitle" android:text="Make clip / GIF"/>
+                <TextView android:id="@+id/clip_subtitle" style="@style/MenuRowSubtitle" android:text="Trim, crop and add text, then save an MP4 or GIF"/>
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- Software decoder -->
+        <LinearLayout
+            android:id="@+id/row_decoder"
+            style="@style/MenuRow">
+            <ImageView style="@style/MenuRowIcon" android:src="@drawable/ic_memory"/>
+            <LinearLayout style="@style/MenuRowTexts">
+                <TextView style="@style/MenuRowTitle" android:text="Software video decoder"/>
+                <TextView style="@style/MenuRowSubtitle" android:text="Try this if a video stutters on the hardware decoder"/>
+            </LinearLayout>
+            <com.google.android.material.materialswitch.MaterialSwitch
+                android:id="@+id/switch_decoder"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"/>
+        </LinearLayout>
+
+        <!-- Info -->
+        <LinearLayout
+            android:id="@+id/row_info"
+            style="@style/MenuRow">
+            <ImageView style="@style/MenuRowIcon" android:src="@drawable/ic_info"/>
+            <LinearLayout style="@style/MenuRowTexts">
+                <TextView style="@style/MenuRowTitle" android:text="Playback info"/>
+            </LinearLayout>
+        </LinearLayout>
+    </LinearLayout>
+</androidx.core.widget.NestedScrollView>

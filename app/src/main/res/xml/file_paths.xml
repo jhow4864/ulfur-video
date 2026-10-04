@@ -1,0 +1,9 @@
+<paths>
+    <cache-path name="sample" path="sample/"/>
+    <cache-path name="exports" path="exports/"/>
+    <external-files-path name="saved_movies" path="Movies/"/>
+    <external-files-path name="saved_pictures" path="Pictures/"/>
+    <!-- Android 9 and older: exports saved to the public Movies/Pictures VideoPlayer folders -->
+    <external-path name="public_movies" path="Movies/VideoPlayer/"/>
+    <external-path name="public_pictures" path="Pictures/VideoPlayer/"/>
+</paths>

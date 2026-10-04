@@ -1,0 +1,344 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/editor_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="?attr/colorSurface"
+    android:focusable="true"
+    android:focusableInTouchMode="true"
+    android:orientation="vertical">
+
+    <com.google.android.material.appbar.MaterialToolbar
+        android:id="@+id/editor_toolbar"
+        android:layout_width="match_parent"
+        android:layout_height="?attr/actionBarSize"
+        app:navigationIcon="@drawable/ic_arrow_back"
+        app:title="@string/clip_editor_title"/>
+
+    <!-- Live preview loop + crop / caption overlay -->
+    <FrameLayout
+        android:id="@+id/editor_preview_frame"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="4"
+        android:background="@android:color/black">
+
+        <ImageView
+            android:id="@+id/editor_poster"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:scaleType="fitCenter"
+            android:importantForAccessibility="no"/>
+
+        <androidx.media3.ui.PlayerView
+            android:id="@+id/editor_player"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            app:use_controller="false"
+            app:resize_mode="fit"
+            app:shutter_background_color="@android:color/transparent"/>
+
+        <com.jamh.videoplayer.ClipOverlayView
+            android:id="@+id/editor_overlay"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"/>
+
+        <ImageButton
+            android:id="@+id/editor_play"
+            style="@style/PlayerIconButton"
+            android:layout_gravity="bottom|start"
+            android:layout_margin="10dp"
+            android:contentDescription="Play / pause preview loop"
+            android:src="@drawable/ic_play"/>
+
+        <TextView
+            android:id="@+id/editor_position"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom|end"
+            android:layout_margin="14dp"
+            android:background="@drawable/bg_badge"
+            android:paddingStart="8dp"
+            android:paddingTop="3dp"
+            android:paddingEnd="8dp"
+            android:paddingBottom="3dp"
+            android:textColor="#FFFFFFFF"
+            android:textSize="12sp"
+            android:fontFeatureSettings="tnum"
+            android:text="0:00.00"/>
+    </FrameLayout>
+
+    <androidx.core.widget.NestedScrollView
+        android:id="@+id/editor_scroll"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="6">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:paddingBottom="12dp">
+
+            <!-- Trim -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Trim"
+                    android:textAppearance="?attr/textAppearanceTitleSmall"
+                    android:textColor="?attr/colorPrimary"/>
+                <TextView
+                    android:id="@+id/editor_range_text"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFeatureSettings="tnum"
+                    android:textAppearance="?attr/textAppearanceBodyMedium"
+                    android:text="0:00.00 – 0:05.00 · 5.00 s"/>
+            </LinearLayout>
+
+            <com.google.android.material.slider.RangeSlider
+                android:id="@+id/editor_range"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:valueFrom="0"
+                android:valueTo="10000"
+                app:minSeparation="8dp"
+                app:labelBehavior="floating"/>
+
+            <TextView
+                android:id="@+id/editor_window_text"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="-6dp"
+                android:layout_marginBottom="6dp"
+                android:textAppearance="?attr/textAppearanceBodySmall"
+                android:textColor="?attr/colorOnSurfaceVariant"
+                android:visibility="gone"/>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+                <TextView style="@style/EditorRowLabel" android:text="Start"/>
+                <Button android:id="@+id/start_minus_s" style="@style/EditorNudge" android:text="−0.1s"/>
+                <Button android:id="@+id/start_minus_f" style="@style/EditorNudge" android:text="−1f"/>
+                <Button android:id="@+id/start_plus_f" style="@style/EditorNudge" android:text="+1f"/>
+                <Button android:id="@+id/start_plus_s" style="@style/EditorNudge" android:text="+0.1s"/>
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+                <TextView style="@style/EditorRowLabel" android:text="End"/>
+                <Button android:id="@+id/end_minus_s" style="@style/EditorNudge" android:text="−0.1s"/>
+                <Button android:id="@+id/end_minus_f" style="@style/EditorNudge" android:text="−1f"/>
+                <Button android:id="@+id/end_plus_f" style="@style/EditorNudge" android:text="+1f"/>
+                <Button android:id="@+id/end_plus_s" style="@style/EditorNudge" android:text="+0.1s"/>
+            </LinearLayout>
+
+            <!-- Crop -->
+            <TextView style="@style/EditorSection" android:text="Crop"/>
+            <com.google.android.material.chip.ChipGroup
+                android:id="@+id/crop_group"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                app:singleSelection="true"
+                app:selectionRequired="true"
+                app:checkedChip="@id/crop_none">
+                <com.google.android.material.chip.Chip android:id="@+id/crop_none" style="@style/EditorChip" android:text="None"/>
+                <com.google.android.material.chip.Chip android:id="@+id/crop_free" style="@style/EditorChip" android:text="Free"/>
+                <com.google.android.material.chip.Chip android:id="@+id/crop_1_1" style="@style/EditorChip" android:text="1:1"/>
+                <com.google.android.material.chip.Chip android:id="@+id/crop_9_16" style="@style/EditorChip" android:text="9:16"/>
+                <com.google.android.material.chip.Chip android:id="@+id/crop_16_9" style="@style/EditorChip" android:text="16:9"/>
+            </com.google.android.material.chip.ChipGroup>
+
+            <!-- Text overlay -->
+            <TextView style="@style/EditorSection" android:text="Text overlay"/>
+            <com.google.android.material.textfield.TextInputLayout
+                style="@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="Caption (optional)"
+                app:endIconMode="clear_text">
+                <com.google.android.material.textfield.TextInputEditText
+                    android:id="@+id/text_input"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:imeOptions="actionDone"
+                    android:inputType="textCapSentences"
+                    android:maxLength="80"/>
+            </com.google.android.material.textfield.TextInputLayout>
+
+            <com.google.android.material.chip.ChipGroup
+                android:id="@+id/text_pos_group"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                app:singleSelection="true"
+                app:selectionRequired="true"
+                app:checkedChip="@id/text_pos_bottom">
+                <com.google.android.material.chip.Chip android:id="@+id/text_pos_top" style="@style/EditorChip" android:text="Top"/>
+                <com.google.android.material.chip.Chip android:id="@+id/text_pos_center" style="@style/EditorChip" android:text="Centre"/>
+                <com.google.android.material.chip.Chip android:id="@+id/text_pos_bottom" style="@style/EditorChip" android:text="Bottom"/>
+            </com.google.android.material.chip.ChipGroup>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+                <TextView style="@style/EditorRowLabel" android:text="Size"/>
+                <com.google.android.material.slider.Slider
+                    android:id="@+id/text_size"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:valueFrom="4"
+                    android:valueTo="18"
+                    android:stepSize="1"
+                    android:value="8"
+                    app:labelBehavior="gone"/>
+            </LinearLayout>
+
+            <com.google.android.material.chip.ChipGroup
+                android:id="@+id/text_color_group"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                app:singleSelection="true"
+                app:selectionRequired="true"/>
+
+            <!-- Output -->
+            <TextView style="@style/EditorSection" android:text="Output"/>
+            <com.google.android.material.button.MaterialButtonToggleGroup
+                android:id="@+id/format_group"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                app:singleSelection="true"
+                app:selectionRequired="true"
+                app:checkedButton="@id/format_mp4">
+                <Button
+                    android:id="@+id/format_mp4"
+                    style="?attr/materialButtonOutlinedStyle"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="MP4 clip"/>
+                <Button
+                    android:id="@+id/format_gif"
+                    style="?attr/materialButtonOutlinedStyle"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="GIF"/>
+            </com.google.android.material.button.MaterialButtonToggleGroup>
+
+            <LinearLayout
+                android:id="@+id/mp4_options"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Keep audio"
+                    android:textAppearance="?attr/textAppearanceBodyLarge"/>
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/keep_audio"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:checked="true"/>
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/gif_options"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:orientation="vertical"
+                android:visibility="gone">
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+                    <TextView style="@style/EditorRowLabel" android:text="Width"/>
+                    <com.google.android.material.chip.ChipGroup
+                        android:id="@+id/gif_width_group"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        app:singleSelection="true"
+                        app:selectionRequired="true"
+                        app:checkedChip="@id/gif_w480">
+                        <com.google.android.material.chip.Chip android:id="@+id/gif_w320" style="@style/EditorChip" android:text="320 px"/>
+                        <com.google.android.material.chip.Chip android:id="@+id/gif_w480" style="@style/EditorChip" android:text="480 px"/>
+                        <com.google.android.material.chip.Chip android:id="@+id/gif_w640" style="@style/EditorChip" android:text="640 px"/>
+                    </com.google.android.material.chip.ChipGroup>
+                </LinearLayout>
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+                    <TextView style="@style/EditorRowLabel" android:text="FPS"/>
+                    <com.google.android.material.chip.ChipGroup
+                        android:id="@+id/gif_fps_group"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        app:singleSelection="true"
+                        app:selectionRequired="true"
+                        app:checkedChip="@id/gif_fps15">
+                        <com.google.android.material.chip.Chip android:id="@+id/gif_fps10" style="@style/EditorChip" android:text="10"/>
+                        <com.google.android.material.chip.Chip android:id="@+id/gif_fps15" style="@style/EditorChip" android:text="15"/>
+                        <com.google.android.material.chip.Chip android:id="@+id/gif_fps20" style="@style/EditorChip" android:text="20"/>
+                    </com.google.android.material.chip.ChipGroup>
+                </LinearLayout>
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/editor_estimate"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:textAppearance="?attr/textAppearanceBodySmall"
+                android:textColor="?attr/colorOnSurfaceVariant"
+                android:text="Estimated size ≈ 4 MB"/>
+
+            <TextView
+                android:id="@+id/editor_warning"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:textAppearance="?attr/textAppearanceBodySmall"
+                android:textColor="?attr/colorError"
+                android:visibility="gone"
+                android:text="GIFs longer than 15 s get very large. Consider an MP4 clip or a shorter range."/>
+        </LinearLayout>
+    </androidx.core.widget.NestedScrollView>
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/editor_export"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:layout_marginStart="16dp"
+        android:layout_marginEnd="16dp"
+        android:layout_marginTop="4dp"
+        android:layout_marginBottom="12dp"
+        android:text="Export MP4"
+        app:icon="@drawable/ic_cut"/>
+</LinearLayout>

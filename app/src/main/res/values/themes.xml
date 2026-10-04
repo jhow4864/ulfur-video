@@ -1,0 +1,54 @@
+<resources>
+    <!-- Dark Material 3 theme. On Android 12+ DynamicColors overlays the wallpaper-based palette;
+         the colours below are the fallback for older devices. -->
+    <style name="Theme.VideoPlayer" parent="Theme.Material3.DynamicColors.Dark.NoActionBar">
+        <item name="colorPrimary">@color/accent</item>
+        <item name="colorOnPrimary">#FF002F6B</item>
+        <item name="colorPrimaryContainer">#FF233A5E</item>
+        <item name="colorOnPrimaryContainer">#FFDDE7FF</item>
+        <item name="colorSecondary">#FFBCC7DC</item>
+        <item name="colorSecondaryContainer">#FF233A5E</item>
+        <item name="colorOnSecondaryContainer">#FFDDE7FF</item>
+        <item name="colorSurface">@color/bg</item>
+        <item name="colorSurfaceContainerLowest">#FF08080A</item>
+        <item name="colorSurfaceContainerLow">#FF121216</item>
+        <item name="colorSurfaceContainer">@color/surface</item>
+        <item name="colorSurfaceContainerHigh">#FF1E1E23</item>
+        <item name="colorSurfaceContainerHighest">#FF28282E</item>
+        <item name="colorOnSurface">@color/text_primary</item>
+        <item name="colorOnSurfaceVariant">@color/text_secondary</item>
+        <item name="android:colorBackground">@color/bg</item>
+        <item name="android:windowBackground">@color/bg</item>
+    </style>
+
+    <style name="Theme.VideoPlayer.Player" parent="Theme.VideoPlayer">
+        <item name="android:windowBackground">@android:color/black</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowFullscreen">true</item>
+    </style>
+
+    <style name="Theme.VideoPlayer.Feed" parent="Theme.VideoPlayer.Player"/>
+
+    <style name="PlayerIconButton">
+        <item name="android:layout_width">48dp</item>
+        <item name="android:layout_height">48dp</item>
+        <item name="android:padding">12dp</item>
+        <item name="android:scaleType">fitCenter</item>
+        <item name="android:background">@drawable/bg_circle_button</item>
+        <item name="tint">#FFFFFFFF</item>
+    </style>
+
+    <style name="EditorNudge" parent="Widget.Material3.Button.TonalButton">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_weight">1</item>
+        <item name="android:minWidth">0dp</item>
+        <item name="android:paddingStart">2dp</item>
+        <item name="android:paddingEnd">2dp</item>
+        <item name="android:layout_marginEnd">4dp</item>
+        <item name="android:textSize">12sp</item>
+        <item name="android:insetTop">0dp</item>
+        <item name="android:insetBottom">0dp</item>
+    </style>
+</resources>
