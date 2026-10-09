@@ -97,6 +97,12 @@ final class CrashGuard {
         return p(c).getInt("quick_crashes", 0);
     }
 
+    /** Cheap check (no read): is there a crash report from last time? */
+    static boolean hasPendingReport(Context c) {
+        File f = crashFile(c);
+        return f.isFile() && f.length() > 0;
+    }
+
     /** The saved crash report, or null. */
     @Nullable
     static String pendingReport(Context c) {

@@ -106,7 +106,7 @@ public class VaultActivity extends AppCompatActivity implements VaultMigration.L
         });
         tb.inflateMenu(R.menu.vault);
         CastSupport.setUpMenuButton(this, tb.getMenu(), R.id.vault_media_route);
-        CastSupport.addMiniController(this, R.id.vault_cast_mini_controller);
+        castBar = CastMiniBar.attach(this, findViewById(R.id.vault_cast_mini_controller));
         tb.setOnMenuItemClickListener(item -> {
             int id = item.getItemId();
             if (id == R.id.action_lock_now) {
@@ -211,6 +211,7 @@ public class VaultActivity extends AppCompatActivity implements VaultMigration.L
     @Override
     protected void onStart() {
         super.onStart();
+        if (castBar != null) castBar.start();
         if (VaultLock.isUnlocked()) {
             showContent();
         } else {
@@ -222,6 +223,7 @@ public class VaultActivity extends AppCompatActivity implements VaultMigration.L
     @Override
     protected void onStop() {
         super.onStop();
+        if (castBar != null) castBar.stop();
         VaultMigration.removeListener(this);
         if (!VaultLock.isUnlocked()) hideContentNow();
     }
@@ -232,6 +234,14 @@ public class VaultActivity extends AppCompatActivity implements VaultMigration.L
         handler.removeCallbacksAndMessages(null);
         io.shutdownNow();
         backupFlow.shutdown();
+    }
+
+    @Nullable private CastMiniBar castBar;
+
+    @VisibleForTesting
+    @Nullable
+    CastMiniBar castBar() {
+        return castBar;
     }
 
     @VisibleForTesting

@@ -107,6 +107,13 @@ public class MainActivity extends AppCompatActivity implements LibraryAdapter.Li
         // Edge-to-edge with light (white) system-bar icons over our dark surfaces.
         EdgeToEdge.enable(this, SystemBarStyle.dark(Color.TRANSPARENT), SystemBarStyle.dark(Color.TRANSPARENT));
         setContentView(R.layout.activity_main);
+        // 1.9.2: show last launch's crash report straight away (not only from onResume, which a
+        // crash in onStart never reaches).
+        try {
+            maybeShowCrashReport();
+        } catch (Throwable t) {
+            android.util.Log.e("MainActivity", "crash report dialog failed", t);
+        }
         toolbar = findViewById(R.id.toolbar);
         tabs = findViewById(R.id.tabs);
         recycler = findViewById(R.id.recycler);
@@ -132,11 +139,8 @@ public class MainActivity extends AppCompatActivity implements LibraryAdapter.Li
             defaultBanner.setVisibility(View.GONE);
         });
         setSupportActionBar(toolbar);
-        try {
-            CastSupport.addMiniController(this, R.id.cast_mini_controller);
-        } catch (Throwable t) {
-            android.util.Log.e("MainActivity", "Cast mini controller unavailable", t);
-        }
+        // 1.9.2: our own Cast mini bar (no Cast fragment; inflated only while casting).
+        castBar = CastMiniBar.attach(this, findViewById(R.id.cast_mini_controller));
         findViewById(R.id.safe_mode_banner).setVisibility(CrashGuard.safeMode() ? View.VISIBLE : View.GONE);
 
         View root = findViewById(R.id.root);
@@ -334,9 +338,29 @@ public class MainActivity extends AppCompatActivity implements LibraryAdapter.Li
     }
 
     @Override
+    protected void onStart() {
+        super.onStart();
+        if (castBar != null) castBar.start();
+    }
+
+    @Override
+    protected void onStop() {
+        super.onStop();
+        if (castBar != null) castBar.stop();
+    }
+
+    @Override
     protected void onDestroy() {
         super.onDestroy();
         io.shutdownNow();
+    }
+
+    @androidx.annotation.Nullable private CastMiniBar castBar;
+
+    @androidx.annotation.VisibleForTesting
+    @androidx.annotation.Nullable
+    CastMiniBar castBar() {
+        return castBar;
     }
 
     // ---------------------------------------------------------------- permissions

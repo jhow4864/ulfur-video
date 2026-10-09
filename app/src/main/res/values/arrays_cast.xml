@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 1.9.2: the TV controls screen's four extra buttons, spelled out explicitly. -->
+    <array name="ulfur_cast_expanded_buttons">
+        <item>@id/cast_button_type_closed_caption</item>
+        <item>@id/cast_button_type_rewind_30_seconds</item>
+        <item>@id/cast_button_type_forward_30_seconds</item>
+        <item>@id/cast_button_type_mute_toggle</item>
+    </array>
+</resources>

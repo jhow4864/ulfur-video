@@ -378,7 +378,7 @@
                 android:clickable="true"/>
         </LinearLayout>
     </FrameLayout>
-    <!-- 1.7.0: Cast mini controller (added at runtime when Google Cast is available) -->
+    <!-- 1.9.2: Ulfur Cast mini bar (CastMiniBar, plain views; shown only while casting). No Cast fragment. -->
     <FrameLayout
         android:id="@+id/cast_mini_controller"
         android:layout_width="match_parent"

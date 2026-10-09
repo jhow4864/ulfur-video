@@ -250,3 +250,33 @@ startup defensive and makes the next crash reportable:
   Cast mini controller / Cast button, the default-player check and the Find duplicates entry guarded;
   `GpuFrameTimer` creation guarded in `UpscaleShaderProgram` (timing is diagnostics only).
 - Tests: `V191CrashGuardTest`.
+
+## v1.9.2 (versionCode 16): Android 17 beta launch crash fixed (hotfix)
+
+Root cause (from the bug report of a Pixel on the Android 17 beta, SDK 37, DP11.260918.006):
+
+```
+java.lang.NullPointerException: Attempt to read from null array
+  at com.google.android.gms.cast.framework.media.widget.MiniControllerFragment.zza(play-services-cast-framework@@22.3.1)
+  at MiniControllerFragment.onCreateView
+  at androidx.fragment.app.Fragment.performCreateView … FragmentActivity.onStart → MainActivity
+```
+
+Google's Cast mini controller fragment, added to the library (and Private) screen on every launch,
+crashed while being created on the Android 17 beta. That happens in `onStart`, outside the 1.9.1
+try/catch (which only covered queueing the fragment in `onCreate`), and before `onResume`, where 1.9.1
+showed the crash dialog, so the dialog never appeared either.
+
+- The Cast `MiniControllerFragment` is gone from every screen. Ulfur now has its own mini bar
+  (`CastMiniBar`: title, "Casting to <TV>", play/pause, stop, tap for the TV controls) made of plain
+  views on `RemoteMediaClient`. It is only inflated when a Cast session is connected and something is
+  playing, and every Cast call in it is wrapped.
+- `CastContext` is created lazily and asynchronously (`CastContext.getSharedInstance(context, executor)`)
+  after the first frame. Until it is ready the Cast buttons stay hidden, then appear. Cast can no longer
+  block or crash launch.
+- Cast is skipped entirely in safe mode and while a crash report from the last launch is pending.
+- The crash dialog is now also shown from `onCreate`, so a crash later in startup can't hide it.
+- The TV controls screen gets an explicit `castControlButtons` array (no reliance on the widget defaults).
+- Tests: `V192CastStartupTest` (Main, Private and Player start with Cast unavailable and create no Cast
+  fragment; Cast not even initialised after a crash or in safe mode; the mini bar shows only while
+  casting and Stop ends the session; no layout or source uses `MiniControllerFragment`).

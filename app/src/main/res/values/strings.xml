@@ -100,6 +100,10 @@
     <string name="gesture_menu_toggle_hint">Swipe for brightness/volume/seek, double-tap to skip, pinch to zoom, hold for 2×</string>
     <string name="gesture_menu_skip">Double-tap skip</string>
     <string name="gesture_skip_value">%1$d seconds</string>
+    <string name="cast_mini_play_pause">Play or pause on the TV</string>
+    <string name="cast_mini_stop">Stop casting</string>
+    <string name="cast_mini_casting_to">Casting to %1$s</string>
+    <string name="cast_mini_nothing">Connected · nothing playing</string>
     <string name="cast_connected_tap">Connected to %1$s · tap to play this video there</string>
     <!-- 1.9.0 duplicate finder -->
     <string name="dupes_title">Find duplicates</string>
