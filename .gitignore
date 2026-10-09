@@ -7,3 +7,6 @@ local.properties
 *.keystore
 keystore.properties
 *.aab
+/third_party/
+/app/.cxx/
+/tools/realesrgan-desktop/esrgan_test

@@ -79,6 +79,12 @@ final class ClipExporter {
         boolean keepAudio = true;
         int gifWidth = 480;
         int gifFps = 15;
+        /**
+         * 1.8.0: run Real-ESRGAN AnimeVideo v3 (2x) over the trimmed/cropped clip before saving
+         * ({@link ExportUpscaler}). MP4 only; the editor only offers it when {@link RealEsrgan#probe}
+         * says the phone can.
+         */
+        boolean upscale2x;
         /** Display-oriented source size if the editor already knows it (0 = probe on a worker). */
         int srcW, srcH;
 
@@ -99,20 +105,30 @@ final class ClipExporter {
         void onError(String message);
 
         void onCancelled();
+
+        /** 1.8.0: a status line for the progress dialog (e.g. "Upscaling 2× · frame 40 · ~2 min left"). */
+        default void onStatus(String status) {}
     }
+
+    /** 1.8.0: with Upscale on export, Transformer's trim/crop pass is the first 30 % of the bar. */
+    static final int UPSCALE_TRIM_SHARE = 30;
 
     private final Context ctx;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final AtomicBoolean cancelled = new AtomicBoolean();
     @Nullable private Transformer transformer;
     @Nullable private Thread worker;
+    @Nullable private volatile ExportUpscaler upscaler;
+    private boolean upscaling;
     private final Runnable progressPoll = new Runnable() {
         @Override
         public void run() {
             if (transformer == null || cancelled.get()) return;
             ProgressHolder h = new ProgressHolder();
             if (transformer.getProgress(h) == Transformer.PROGRESS_STATE_AVAILABLE && callback != null) {
-                callback.onProgress(Math.min(95, h.progress)); // last 5 % = copying into MediaStore
+                callback.onProgress(upscaling
+                        ? h.progress * UPSCALE_TRIM_SHARE / 100
+                        : Math.min(95, h.progress)); // last 5 % = copying into MediaStore
             }
             main.postDelayed(this, 200);
         }
@@ -130,6 +146,8 @@ final class ClipExporter {
             transformer.cancel();
             transformer = null;
         }
+        ExportUpscaler up = upscaler;
+        if (up != null) up.cancel();
         if (worker != null) worker.interrupt();
         Callback cb = callback;
         callback = null;
@@ -139,6 +157,7 @@ final class ClipExporter {
     void start(Spec spec, Callback cb) {
         callback = cb;
         cancelled.set(false);
+        upscaling = spec.upscale2x && !spec.gif;
         if (spec.gif) startGif(spec);
         else startMp4(spec);
     }
@@ -206,7 +225,16 @@ final class ClipExporter {
                 .setHdrMode(Composition.HDR_MODE_TONE_MAP_HDR_TO_SDR_USING_OPEN_GL)
                 .build();
 
-        transformer = new Transformer.Builder(ctx)
+        Transformer.Builder builder = new Transformer.Builder(ctx);
+        if (upscaling) {
+            // 1.8.0: the trimmed clip is re-encoded again after upscaling, so keep this intermediate
+            // generation nearly lossless. Plain exports keep Transformer's default encoder settings.
+            builder.setEncoderFactory(new androidx.media3.transformer.DefaultEncoderFactory.Builder(ctx)
+                    .setRequestedVideoEncoderSettings(new androidx.media3.transformer.VideoEncoderSettings.Builder()
+                            .setBitrate(INTERMEDIATE_BITRATE).build())
+                    .build());
+        }
+        transformer = builder
                 // 1.6.0: reads Private (encrypted) videos through VaultDataSource
                 .setAssetLoaderFactory(new androidx.media3.transformer.DefaultAssetLoaderFactory(ctx,
                         new androidx.media3.transformer.DefaultDecoderFactory.Builder(ctx).build(),
@@ -221,7 +249,8 @@ final class ClipExporter {
                         main.removeCallbacks(progressPoll);
                         transformer = null;
                         if (cancelled.get()) return;
-                        saveInBackground(out, fileName(spec, "mp4"), MimeTypes.VIDEO_MP4);
+                        if (upscaling) upscaleInBackground(out, spec);
+                        else saveInBackground(out, fileName(spec, "mp4"), MimeTypes.VIDEO_MP4);
                     }
 
                     @Override
@@ -237,6 +266,66 @@ final class ClipExporter {
                 .build();
         transformer.start(composition, out.getAbsolutePath());
         main.post(progressPoll);
+    }
+
+    // ----------------------------------------------------------------------------- 1.8.0 upscale
+
+    static final int INTERMEDIATE_BITRATE = 24_000_000;
+
+    /** Real-ESRGAN 2x over the trimmed clip, streaming (decode → upscale → encode), then save. */
+    private void upscaleInBackground(File trimmed, Spec spec) {
+        worker = new Thread(() -> {
+            File out = exportFile("mp4");
+            ExportUpscaler up = new ExportUpscaler(ctx, cancelled);
+            upscaler = up;
+            try {
+                post(cb -> cb.onStatus("Upscaling 2× with Real-ESRGAN on the GPU…"));
+                up.run(trimmed, out, (fraction, frames, msLeft) -> {
+                    int pct = UPSCALE_TRIM_SHARE + Math.round(fraction * (95 - UPSCALE_TRIM_SHARE));
+                    String status = upscaleStatus(frames, msLeft);
+                    post(cb -> {
+                        cb.onProgress(pct);
+                        cb.onStatus(status);
+                    });
+                });
+                //noinspection ResultOfMethodCallIgnored
+                trimmed.delete();
+                upscaler = null;
+                saveBlocking(out, fileName(spec, "mp4"), MimeTypes.VIDEO_MP4);
+            } catch (ExportUpscaler.CancelledException e) {
+                cleanup(trimmed, out);
+            } catch (Exception | OutOfMemoryError e) {
+                cleanup(trimmed, out);
+                if (!cancelled.get()) fail("Upscale failed: " + e.getMessage());
+            } finally {
+                upscaler = null;
+            }
+        }, "clip-upscale");
+        worker.start();
+    }
+
+    static String upscaleStatus(int frames, long msLeft) {
+        String left = msLeft < 0 ? "" : msLeft < 60_000 ? " · under a minute left"
+                : " · about " + Math.round(msLeft / 60_000.0) + " min left";
+        return "Upscaling 2× · frame " + frames + left;
+    }
+
+    private static void cleanup(File a, File b) {
+        //noinspection ResultOfMethodCallIgnored
+        a.delete();
+        //noinspection ResultOfMethodCallIgnored
+        b.delete();
+    }
+
+    private interface CallbackAction {
+        void run(Callback cb);
+    }
+
+    private void post(CallbackAction action) {
+        main.post(() -> {
+            Callback cb = callback;
+            if (cb != null && !cancelled.get()) action.run(cb);
+        });
     }
 
     // ----------------------------------------------------------------------------- GIF
@@ -451,6 +540,7 @@ final class ClipExporter {
             // ~0.5 bytes/pixel/frame for dithered video content after LZW, + 768-byte palette per frame.
             return (long) (secs * s.gifFps * (w * h * 0.5 + 800));
         }
+        if (s.upscale2x) { srcW *= 2; srcH *= 2; } // 1.8.0: the saved clip is 2x
         long px = (long) Math.max(1, srcW) * Math.max(1, srcH);
         double mbps = px >= 1920L * 1080 ? 12 : px >= 1280L * 720 ? 6 : 2.5;
         if (s.crop != null) mbps *= Math.max(0.25, s.crop.width() * s.crop.height());

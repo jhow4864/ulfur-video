@@ -11,6 +11,13 @@ def media3Version = '1.9.4'
 // or Android won't install them over the existing app (and the private videos would be lost on uninstall).
 def keystorePropsPath = project.findProperty('ulfur.keystoreProperties') ?: System.getenv('ULFUR_VIDEO_KEYSTORE_PROPERTIES')
 def keystoreProps = new Properties()
+
+// 1.8.0 "Upscale on export (2x)": native Real-ESRGAN on prebuilt ncnn (tools/ncnn/fetch_ncnn.sh).
+// Without the ncnn directory the app still builds; the option is compiled out (feature flag).
+// Prefers the size-trimmed build (tools/ncnn/build_ncnn_min.sh), else the full prebuilt release.
+def ncnnMin = file("${rootDir}/third_party/ncnn-20260526-android-vulkan-min")
+def ncnnDir = file(project.findProperty('ulfur.ncnnDir') ?: (ncnnMin.isDirectory() ? ncnnMin : "${rootDir}/third_party/ncnn-20260526-android-vulkan"))
+def nativeUpscale = ncnnDir.isDirectory() && !(project.findProperty('ulfur.noNativeUpscale') ?: false).toBoolean()
 if (keystorePropsPath != null && file(keystorePropsPath).isFile()) {
     file(keystorePropsPath).withInputStream { keystoreProps.load(it) }
 }
@@ -23,12 +30,35 @@ android {
         applicationId 'com.jamh.videoplayer'
         minSdk 24
         targetSdk 34
-        versionCode 12
-        versionName '1.7.0'
+        versionCode 13
+        versionName '1.8.0'
+
+        // 1.8.0 feature flag: "Upscale on export (2x)" (true only when the native upscaler is built)
+        buildConfigField 'boolean', 'UPSCALE_EXPORT', nativeUpscale ? 'true' : 'false'
+        if (nativeUpscale) {
+            externalNativeBuild {
+                cmake {
+                    arguments "-DNCNN_ROOT=${ncnnDir}", '-DANDROID_STL=c++_static'
+                    // Only arm64: keeps the APK small (other ABIs simply don't offer the option).
+                    abiFilters 'arm64-v8a'
+                }
+            }
+        }
 
         ndk {
             // Pixels are arm64; x86_64 kept for emulators, armeabi-v7a for older phones.
             abiFilters 'arm64-v8a', 'armeabi-v7a', 'x86_64'
+        }
+    }
+
+    ndkVersion '27.2.12479018'
+    buildFeatures { buildConfig true }
+    if (nativeUpscale) {
+        externalNativeBuild {
+            cmake {
+                path 'src/main/cpp/CMakeLists.txt'
+                version '3.22.1'
+            }
         }
     }
 

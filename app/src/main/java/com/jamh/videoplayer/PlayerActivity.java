@@ -242,6 +242,11 @@ public class PlayerActivity extends AppCompatActivity {
     private int effectBoxW, effectBoxH;
     private String appliedEffectsKey = "";
     private final Upscaler.Watchdog upscaleWatchdog = new Upscaler.Watchdog();
+    /** 1.8.0: Sharp (Anime4K) was too heavy / unsupported here: Balanced for the rest of the session. */
+    private boolean sharpDowngraded;
+    /** 1.8.0: GPU time per upscaled frame, written on the GL thread (see GpuFrameTimer). */
+    final Upscaler.FrameTimes upscaleFrameTimes = new Upscaler.FrameTimes();
+    private final Upscaler.SharpGuard sharpGuard = new Upscaler.SharpGuard();
     private long lastPlaybackDisturbanceAt;
     private long watchdogLastDropped = -1;
     private long watchdogLastAt;
@@ -2806,7 +2811,12 @@ public class PlayerActivity extends AppCompatActivity {
     // =================================================================== upscaling (1.5.0)
 
     private boolean upscaleWanted() {
-        return upscaleMode != Upscaler.MODE_OFF && !upscaleSessionOff && !currentItemHdr;
+        return Upscaler.pipelineWanted(upscaleMode, upscaleSessionOff, currentItemHdr);
+    }
+
+    /** 1.8.0: the mode the shaders run (Sharp → Balanced after the safety net tripped this session). */
+    int effectiveUpscaleMode() {
+        return Upscaler.effectiveMode(upscaleMode, sharpDowngraded);
     }
 
     /** Effects are actually processing frames (pipeline present, wanted, and not in the PiP window). */
@@ -2833,11 +2843,13 @@ public class PlayerActivity extends AppCompatActivity {
         if (player == null || !upscalePipeline) return;
         updateEffectBox();
         boolean run = upscaleRunning();
-        String key = run ? upscaleMode + "/" + upscaleQuality + "/" + effectBoxW + "x" + effectBoxH : "none";
+        int mode = effectiveUpscaleMode();
+        String key = run ? mode + "/" + upscaleQuality + "/" + effectBoxW + "x" + effectBoxH : "none";
         if (key.equals(appliedEffectsKey)) return;
         appliedEffectsKey = key;
+        upscaleFrameTimes.reset();
         List<Effect> effects = run
-                ? Collections.singletonList(new UpscaleEffect(upscaleMode, upscaleQuality, effectBoxW, effectBoxH))
+                ? Collections.singletonList(new UpscaleEffect(mode, upscaleQuality, effectBoxW, effectBoxH, upscaleFrameTimes))
                 : Collections.emptyList();
         try {
             player.setVideoEffects(effects);
@@ -2863,6 +2875,9 @@ public class PlayerActivity extends AppCompatActivity {
         upscaleMode = Upscaler.sanitizeMode(mode);
         Prefs.setUpscaleMode(this, upscaleMode);
         upscaleSessionOff = false;
+        sharpDowngraded = false; // choosing a mode again gives Sharp another try
+        upscaleFrameTimes.clearSharpUnsupported();
+        upscaleFrameTimes.reset();
         upscaleWatchdog.reset();
         watchdogLastDropped = -1;
         updateUpscaleButton();
@@ -2904,10 +2919,7 @@ public class PlayerActivity extends AppCompatActivity {
 
     private void showUpscaleDialog() {
         handler.removeCallbacks(hideControlsRunnable);
-        String[] items = {
-                "Off",
-                "Balanced: FSR upscale + gentle sharpening",
-                "Sharp: FSR upscale + strong sharpening"};
+        String[] items = Upscaler.pickerItems();
         new MaterialAlertDialogBuilder(this)
                 .setTitle("Upscale")
                 .setSingleChoiceItems(items, upscaleMode, (d, which) -> {
@@ -2937,7 +2949,8 @@ public class PlayerActivity extends AppCompatActivity {
         updateEffectBox();
         int w = vs.pixelWidthHeightRatio > 0 && vs.pixelWidthHeightRatio != 1f
                 ? Math.round(vs.width * vs.pixelWidthHeightRatio) : vs.width;
-        return Upscaler.plan(w, vs.height, effectBoxW, effectBoxH, upscaleMode).describe(w, vs.height);
+        return Upscaler.route(currentItemHdr, w, vs.height, effectBoxW, effectBoxH, effectiveUpscaleMode(), upscaleQuality)
+                .describe(w, vs.height);
     }
 
     String upscaleSheetSubtitle() {
@@ -2945,6 +2958,8 @@ public class PlayerActivity extends AppCompatActivity {
         String s = Upscaler.modeLabel(upscaleMode);
         if (currentItemHdr) return s + " · paused for HDR video";
         if (upscaleSessionOff) return s + " · paused (this phone couldn't keep up)";
+        if (upscaleMode == Upscaler.MODE_SHARP && sharpDowngraded) return "Sharp → Balanced this session · FSR 1.0";
+        if (effectiveUpscaleMode() == Upscaler.MODE_SHARP) return s + " · Anime4K · best for anime & cartoons";
         return s + " · " + (upscaleQuality == Upscaler.QUALITY_LITE ? "Lite" : "FSR 1.0");
     }
 
@@ -2954,10 +2969,16 @@ public class PlayerActivity extends AppCompatActivity {
         if (currentItemHdr) return sb.append(" · paused for HDR video").toString();
         if (upscaleSessionOff) return sb.append(" · paused: frames were dropping").toString();
         if (!upscalePipeline) return sb.append(" · starts with the next video").toString();
-        sb.append(" · ").append(Upscaler.qualityLabel(upscaleQuality));
+        if (upscaleMode == Upscaler.MODE_SHARP && sharpDowngraded) sb.append(" → Balanced (this session)");
+        sb.append(" · ").append(effectiveUpscaleMode() == Upscaler.MODE_SHARP
+                ? "Anime4K v4 Restore + Upscale CNN x2 (M)" : Upscaler.qualityLabel(upscaleQuality));
         if (isInPip()) return sb.append(" · paused in PiP").toString();
         String plan = upscalePlanText();
         if (plan != null) sb.append("\n").append(plan);
+        double gpu = upscaleFrameTimes.lastMeanMs();
+        if (gpu >= 0) {
+            sb.append(String.format(java.util.Locale.UK, "\nGPU %.1f ms/frame (%s)", gpu, upscaleFrameTimes.timingSource()));
+        }
         return sb.toString();
     }
 
@@ -2982,6 +3003,11 @@ public class PlayerActivity extends AppCompatActivity {
         String msg;
         if (currentItemHdr) {
             msg = "Upscale paused for this HDR video";
+        } else if (effectiveUpscaleMode() == Upscaler.MODE_SHARP) {
+            // 1.8.0: an Anime4K failure only costs Sharp, never the FSR fallbacks below.
+            upscaleGlFailures--;
+            sharpDowngraded = true;
+            msg = "Sharp couldn't run on this phone's GPU: using Balanced for now";
         } else if (upscaleQuality == Upscaler.QUALITY_FSR && upscaleGlFailures == 1) {
             upscaleQuality = Upscaler.QUALITY_LITE;
             msg = "Upscale switched to Lite: this phone's GPU couldn't run FSR";
@@ -3003,20 +3029,50 @@ public class PlayerActivity extends AppCompatActivity {
         boolean steady = player != null && upscaleRunning() && player.isPlaying() && !scrubbing
                 && player.getPlaybackState() == Player.STATE_READY
                 && now - lastPlaybackDisturbanceAt > 1_500 && dc != null;
+        boolean sharp = player != null && upscaleRunning() && effectiveUpscaleMode() == Upscaler.MODE_SHARP;
+        if (sharp && upscaleFrameTimes.sharpUnsupported()) {
+            downgradeSharp("Sharp needs a newer GPU (" + upscaleFrameTimes.sharpUnsupportedReason() + ")");
+            return;
+        }
         if (!steady) {
             watchdogLastDropped = -1;
+            upscaleFrameTimes.drain(); // seeking / paused / buffering: don't judge these frames
             return;
         }
         dc.ensureUpdated();
         long dropped = dc.droppedBufferCount;
+        Format f = player.getVideoFormat();
+        float fps = f != null && f.frameRate > 0 ? f.frameRate : 30f;
+        double rate = fps * player.getPlaybackParameters().speed;
+        double[] gpu = upscaleFrameTimes.drain();
+        if (sharp && sharpGuard.onWindow(gpu[0], (int) gpu[1], rate)) {
+            // 1.8.0: GPU time over 80 % of the frame interval for a whole ~2 s window.
+            downgradeSharp(String.format(java.util.Locale.UK, "GPU %.0f ms/frame, budget %.0f ms",
+                    gpu[0], Upscaler.SharpGuard.budgetMs(rate)));
+            watchdogLastDropped = -1;
+            return;
+        }
         if (watchdogLastDropped >= 0 && dropped >= watchdogLastDropped) {
-            Format f = player.getVideoFormat();
-            float fps = f != null && f.frameRate > 0 ? f.frameRate : 30f;
-            double expected = (now - watchdogLastAt) / 1000.0 * fps * player.getPlaybackParameters().speed;
-            if (upscaleWatchdog.onWindow(dropped - watchdogLastDropped, expected)) stepDownUpscale();
+            double expected = (now - watchdogLastAt) / 1000.0 * rate;
+            if (upscaleWatchdog.onWindow(dropped - watchdogLastDropped, expected)) {
+                if (sharp) downgradeSharp("frames were dropping");
+                else stepDownUpscale();
+            }
         }
         watchdogLastDropped = dropped;
         watchdogLastAt = now;
+    }
+
+    /** 1.8.0: Sharp → Balanced for the rest of this session (the saved choice stays Sharp). */
+    void downgradeSharp(String why) {
+        if (sharpDowngraded) return;
+        sharpDowngraded = true;
+        upscaleWatchdog.reset();
+        upscaleFrameTimes.reset();
+        watchdogLastDropped = -1;
+        applyUpscaleEffects();
+        updateUpscaleButton();
+        showUpscaleToast("Sharp → Balanced", "Too heavy for this phone here · " + why);
     }
 
     private void stepDownUpscale() {

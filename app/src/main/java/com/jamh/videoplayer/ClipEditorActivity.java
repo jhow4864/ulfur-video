@@ -86,6 +86,11 @@ public class ClipEditorActivity extends AppCompatActivity {
     private ImageButton playButton;
     private MaterialButton exportButton;
     private View mp4Options, gifOptions;
+    /** 1.8.0 "Upscale on export (2x)". */
+    private View upscaleOptions;
+    private MaterialSwitch upscaleSwitch;
+    private TextView upscaleHint;
+    @Nullable private RealEsrgan.Availability upscaleAvailability;
 
     private long durationMs;
     private boolean durationKnown;
@@ -544,8 +549,10 @@ public class ClipEditorActivity extends AppCompatActivity {
             spec.gif = id == R.id.format_gif;
             mp4Options.setVisibility(spec.gif ? View.GONE : View.VISIBLE);
             gifOptions.setVisibility(spec.gif ? View.VISIBLE : View.GONE);
+            upscaleOptions.setVisibility(BuildConfig.UPSCALE_EXPORT && !spec.gif ? View.VISIBLE : View.GONE);
             updateTexts();
         });
+        setupUpscaleExport();
         MaterialSwitch keepAudio = findViewById(R.id.keep_audio);
         keepAudio.setOnCheckedChangeListener((b, on) -> {
             spec.keepAudio = on;
@@ -563,6 +570,48 @@ public class ClipEditorActivity extends AppCompatActivity {
             spec.gifFps = id == R.id.gif_fps10 ? 10 : id == R.id.gif_fps20 ? 20 : 15;
             updateTexts();
         });
+    }
+
+    /**
+     * 1.8.0: the "Upscale on export (2×)" row. Behind the {@code BuildConfig.UPSCALE_EXPORT} feature
+     * flag (false when the build has no native upscaler). The switch stays disabled, with the reason
+     * underneath, until {@link RealEsrgan#probe} confirms arm64 + the library + a Vulkan GPU.
+     */
+    private void setupUpscaleExport() {
+        upscaleOptions = findViewById(R.id.upscale_export_options);
+        upscaleSwitch = findViewById(R.id.upscale_export);
+        upscaleHint = findViewById(R.id.upscale_export_hint);
+        upscaleSwitch.setOnCheckedChangeListener((b, on) -> {
+            spec.upscale2x = on;
+            updateTexts();
+        });
+        if (!BuildConfig.UPSCALE_EXPORT) {
+            upscaleOptions.setVisibility(View.GONE);
+            return;
+        }
+        upscaleOptions.setVisibility(spec.gif ? View.GONE : View.VISIBLE);
+        RealEsrgan.Availability known = RealEsrgan.cachedOrNull();
+        if (known != null) {
+            applyUpscaleAvailability(known);
+            return;
+        }
+        new Thread(() -> {
+            RealEsrgan.Availability a = RealEsrgan.probe();
+            runOnUiThread(() -> { if (!isDestroyed()) applyUpscaleAvailability(a); });
+        }, "esrgan-probe").start();
+    }
+
+    @VisibleForTesting
+    void applyUpscaleAvailability(RealEsrgan.Availability a) {
+        upscaleAvailability = a;
+        upscaleSwitch.setEnabled(a.available);
+        if (!a.available) {
+            upscaleSwitch.setChecked(false);
+            upscaleHint.setText("Unavailable: " + a.reason);
+        } else {
+            upscaleHint.setText("Real-ESRGAN AnimeVideo v3 on " + a.device
+                    + " · best for anime & cartoons · slow: roughly 0.5–2 s per frame on a mid-range phone");
+        }
     }
 
     /** Selects the output format (used by the format toggle and tests). */
@@ -583,7 +632,8 @@ public class ClipEditorActivity extends AppCompatActivity {
                 + " · " + String.format(java.util.Locale.US, "%.2f s", len / 1000.0));
         long bytes = ClipExporter.estimateBytes(spec, videoW, videoH);
         String what = spec.gif ? "GIF " + spec.gifWidth + " px · " + spec.gifFps + " fps"
-                : "MP4 (H.264" + (spec.keepAudio ? " + AAC" : ", no audio") + ")";
+                : "MP4 (H.264" + (spec.keepAudio ? " + AAC" : ", no audio") + ")"
+                + (spec.upscale2x ? " · upscaled 2×" : "");
         estimateText.setText(what + " · estimated ≈ " + Fmt.size(bytes));
         boolean warn = spec.gif && len > GIF_WARN_MS;
         warningText.setVisibility(warn ? View.VISIBLE : View.GONE);
@@ -630,7 +680,9 @@ public class ClipEditorActivity extends AppCompatActivity {
         View content = getLayoutInflater().inflate(R.layout.dialog_export_progress, null);
         LinearProgressIndicator bar = content.findViewById(R.id.export_progress);
         TextView status = content.findViewById(R.id.export_status);
-        status.setText(spec.gif ? "Extracting frames and encoding GIF…" : "Encoding MP4 with the hardware encoder…");
+        status.setText(spec.gif ? "Extracting frames and encoding GIF…"
+                : spec.upscale2x ? "Trimming, then upscaling 2× on the GPU…" : "Encoding MP4 with the hardware encoder…");
+        final String[] lastStatus = {null};
         exporter = new ClipExporter(this);
         progressDialog = new MaterialAlertDialogBuilder(this)
                 .setTitle(spec.gif ? "Making GIF" : "Making clip")
@@ -650,7 +702,12 @@ public class ClipEditorActivity extends AppCompatActivity {
                     bar.setMax(100);
                 }
                 bar.setProgressCompat(percent, true);
-                status.setText(percent + "%");
+                status.setText(lastStatus[0] == null ? percent + "%" : percent + "% · " + lastStatus[0]);
+            }
+
+            @Override
+            public void onStatus(String s) {
+                lastStatus[0] = s;
             }
 
             @Override
@@ -682,6 +739,7 @@ public class ClipEditorActivity extends AppCompatActivity {
         c.crop = spec.crop == null ? null : new RectF(spec.crop);
         c.text = spec.text; c.textPosition = spec.textPosition; c.textSize = spec.textSize; c.textColor = spec.textColor;
         c.gif = spec.gif; c.keepAudio = spec.keepAudio; c.gifWidth = spec.gifWidth; c.gifFps = spec.gifFps;
+        c.upscale2x = spec.upscale2x && !spec.gif;
         c.srcW = videoW; c.srcH = videoH;
         return c;
     }
