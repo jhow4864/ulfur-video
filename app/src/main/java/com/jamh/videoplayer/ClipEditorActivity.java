@@ -246,20 +246,22 @@ public class ClipEditorActivity extends AppCompatActivity {
     static long[] readMetadata(android.content.Context ctx, Uri uri) {
         long[] out = {0, 0, 0};
         MediaMetadataRetriever mmr = new MediaMetadataRetriever();
+        java.io.Closeable src = null;
         try {
-            mmr.setDataSource(ctx, uri);
+            src = VaultMediaDataSource.setDataSource(ctx, mmr, uri);
             out[0] = parse(mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION));
             long w = parse(mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH));
             long h = parse(mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT));
             long rot = parse(mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION));
             if (rot == 90 || rot == 270) { out[1] = h; out[2] = w; } else { out[1] = w; out[2] = h; }
-        } catch (RuntimeException ignored) {
+        } catch (RuntimeException | java.io.IOException ignored) {
             // Unknown container or a provider without seekable access: rely on the player instead.
         } finally {
             try {
                 mmr.release();
             } catch (Exception ignored) {
             }
+            VaultMediaDataSource.closeQuietly(src);
         }
         return out;
     }

@@ -2,4 +2,6 @@
 <!-- Android 11 and older (fullBackupContent): private videos never go to backups. -->
 <full-backup-content>
     <exclude domain="file" path="vault/"/>
+    <!-- 1.6.0: the vault keyset is wrapped by a Keystore key that never leaves this phone -->
+    <exclude domain="sharedpref" path="ulfur_vault_keyset.xml"/>
 </full-backup-content>

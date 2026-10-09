@@ -44,6 +44,13 @@ final class MediaProbe {
             File f = new File(uri.getPath());
             r.displayName = f.getName();
             if (f.isFile()) r.sizeBytes = f.length();
+        } else if (Vault.isVaultUri(uri)) {
+            // Private (encrypted) video: the index knows the real name and plaintext size.
+            Vault.Entry e = Vault.findByUri(ctx, uri);
+            if (e != null) {
+                r.displayName = e.name;
+                r.sizeBytes = e.size;
+            }
         } else if ("content".equals(scheme)) {
             try (Cursor c = ctx.getContentResolver().query(uri,
                     new String[]{OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE}, null, null, null)) {
@@ -62,20 +69,21 @@ final class MediaProbe {
             }
         }
         MediaMetadataRetriever mmr = new MediaMetadataRetriever();
+        java.io.Closeable src = null;
         try {
-            if ("file".equals(scheme) && uri.getPath() != null) mmr.setDataSource(uri.getPath());
-            else mmr.setDataSource(ctx, uri);
+            src = VaultMediaDataSource.setDataSource(ctx, mmr, uri);
             r.durationMs = parse(mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION));
             r.bitrateBps = parse(mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_BITRATE));
             r.width = (int) parse(mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH));
             r.height = (int) parse(mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT));
-        } catch (RuntimeException ignored) {
+        } catch (RuntimeException | java.io.IOException ignored) {
             // Unsupported container (FFmpeg-only formats) or unreadable: bitrate stays unknown.
         } finally {
             try {
                 mmr.release();
             } catch (Exception ignored) {
             }
+            VaultMediaDataSource.closeQuietly(src);
         }
         return r;
     }

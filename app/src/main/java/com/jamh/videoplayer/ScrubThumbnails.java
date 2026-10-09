@@ -316,6 +316,7 @@ final class ScrubThumbnails {
         boolean loaded = loadFromDisk();
         if (loaded) postAvailable(-1);
         MediaMetadataRetriever mmr = null;
+        java.io.Closeable mmrSource = null;
         DataOutputStream pack = null;
         int failures = 0, successes = 0;
         try {
@@ -358,8 +359,8 @@ final class ScrubThumbnails {
                 if (mmr == null) {
                     mmr = new MediaMetadataRetriever();
                     try {
-                        mmr.setDataSource(app, uri);
-                    } catch (RuntimeException e) {
+                        mmrSource = VaultMediaDataSource.setDataSource(app, mmr, uri);
+                    } catch (RuntimeException | java.io.IOException e) {
                         markUnavailable();
                         return;
                     }
@@ -399,6 +400,7 @@ final class ScrubThumbnails {
                 } catch (Exception ignored) {
                 }
             }
+            VaultMediaDataSource.closeQuietly(mmrSource);
             if (pack != null) {
                 try {
                     pack.close();

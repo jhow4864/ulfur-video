@@ -485,7 +485,11 @@ public class V13FeatureTest {
         assertEquals(Vault.sha256Of(src), e.sha256);
         File stored = Vault.fileOf(app, e);
         assertTrue(stored.getPath().startsWith(new File(app.getFilesDir(), "vault").getPath()));
-        assertArrayEquals(Files.readAllBytes(src.toPath()), Files.readAllBytes(stored.toPath()));
+        // 1.6.0: stored encrypted; the plaintext comes back through the vault's own reader.
+        assertTrue(e.enc);
+        try (java.io.InputStream in = Vault.openStream(app, e)) {
+            assertArrayEquals(Files.readAllBytes(src.toPath()), in.readAllBytes());
+        }
         List<Vault.Entry> list = Vault.list(app);
         assertEquals(1, list.size());
         assertEquals("Wedding speech.mp4", list.get(0).name);

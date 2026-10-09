@@ -8,5 +8,7 @@ public class VideoPlayerApp extends Application {
     public void onCreate() {
         super.onCreate();
         VaultLock.install(this); // Private videos re-lock when the app goes to the background
+        // 1.6.0: encrypt Private videos from older versions in place (resumable, one at a time).
+        if (VaultMigration.autoStart) VaultMigration.start(this);
     }
 }

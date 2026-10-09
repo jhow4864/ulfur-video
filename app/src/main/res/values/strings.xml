@@ -24,7 +24,15 @@
     <string name="vault_no_lock_title">Set up a screen lock first</string>
     <string name="vault_no_lock_body">Private videos are protected by your phone\'s screen lock or fingerprint. Add a PIN, pattern, password or fingerprint in Settings, then come back.</string>
     <string name="vault_open_settings">Open security settings</string>
-    <string name="vault_warning">Private videos are stored only inside Ulfur Video on this phone and aren\'t backed up. Uninstalling the app or clearing its storage permanently deletes them. Move videos out before you uninstall or switch phones.</string>
+    <string name="vault_warning">Private videos are encrypted and stored only inside Ulfur Video on this phone. They aren\'t in your phone\'s backups. Uninstalling the app or clearing its storage permanently deletes them. Move them out before you uninstall or switch phones.</string>
+    <string name="vault_migration_retry">Try again</string>
+    <string name="vault_migration_running">Encrypting private videos · %1$d of %2$d</string>
+    <string name="vault_migration_running_body">%1$s of %2$s. Each video stays in its old form until its encrypted copy has been checked, so it\'s safe to leave or close the app.</string>
+    <string name="vault_migration_failed_body">These are still stored unencrypted (nothing was lost). Ulfur Video tries again next time it starts.</string>
+    <plurals name="vault_migration_failed">
+        <item quantity="one">%d video couldn\'t be encrypted yet</item>
+        <item quantity="other">%d videos couldn\'t be encrypted yet</item>
+    </plurals>
     <string name="vault_empty">No private videos yet.\n\nIn the library, long-press a video to select it (tap more to add them), then tap the lock to move them here.</string>
     <string name="vault_hint">Tap to play · long-press to select</string>
     <string name="vault_lock_now">Lock now</string>

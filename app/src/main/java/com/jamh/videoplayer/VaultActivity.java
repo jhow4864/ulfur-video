@@ -47,7 +47,7 @@ import java.util.concurrent.Executors;
  * Private videos screen. Shown only after BiometricPrompt (fingerprint/face or screen lock),
  * FLAG_SECURE (no screenshots, blank in Recents), re-locks when the app goes to the background.
  */
-public class VaultActivity extends AppCompatActivity {
+public class VaultActivity extends AppCompatActivity implements VaultMigration.Listener {
 
     private final ExecutorService io = Executors.newSingleThreadExecutor();
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -75,6 +75,12 @@ public class VaultActivity extends AppCompatActivity {
     private View selectionBar;
     private TextView selectAllButton, moveOutButton;
     private ActivityResultLauncher<String> writePermission;
+    // 1.6.0 encryption migration banner
+    private View migrationCard;
+    private TextView migrationTitle, migrationBody;
+    private LinearProgressIndicator migrationBar;
+    private MaterialButton migrationRetry;
+    private boolean migrationWasRunning;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -126,6 +132,12 @@ public class VaultActivity extends AppCompatActivity {
         storageBar = findViewById(R.id.vault_storage_bar);
         unlockButton = findViewById(R.id.vault_unlock);
         list = findViewById(R.id.vault_list);
+        migrationCard = findViewById(R.id.vault_migration);
+        migrationTitle = findViewById(R.id.vault_migration_title);
+        migrationBody = findViewById(R.id.vault_migration_body);
+        migrationBar = findViewById(R.id.vault_migration_bar);
+        migrationRetry = findViewById(R.id.vault_migration_retry);
+        migrationRetry.setOnClickListener(v -> VaultMigration.start(this));
         int span = getResources().getConfiguration().screenWidthDp >= 600 ? 4 : 2;
         list.setLayoutManager(new GridLayoutManager(this, span));
         adapter = new Adapter();
@@ -174,6 +186,7 @@ public class VaultActivity extends AppCompatActivity {
     @Override
     protected void onStop() {
         super.onStop();
+        VaultMigration.removeListener(this);
         if (!VaultLock.isUnlocked()) hideContentNow();
     }
 
@@ -224,7 +237,41 @@ public class VaultActivity extends AppCompatActivity {
     void showContent() {
         lockedPanel.setVisibility(View.GONE);
         content.setVisibility(View.VISIBLE);
+        VaultMigration.removeListener(this);
+        VaultMigration.addListener(this);
         reload();
+    }
+
+    /** 1.6.0: progress of encrypting videos added by older versions, and anything that failed. */
+    @Override
+    public void onMigrationState(VaultMigration.State s) {
+        if (isDestroyed() || content.getVisibility() != View.VISIBLE) return;
+        if (s.running) {
+            migrationWasRunning = true;
+            migrationCard.setVisibility(View.VISIBLE);
+            migrationTitle.setText(getString(R.string.vault_migration_running, Math.min(s.done + 1, s.total), s.total));
+            migrationBody.setText(getString(R.string.vault_migration_running_body,
+                    Fmt.size(s.bytesDone), Fmt.size(s.bytesTotal)));
+            migrationBar.setVisibility(View.VISIBLE);
+            migrationBar.setProgress(s.bytesTotal <= 0 ? 0 : (int) (1000 * s.bytesDone / s.bytesTotal));
+            migrationRetry.setVisibility(View.GONE);
+        } else if (!s.failed.isEmpty()) {
+            migrationCard.setVisibility(View.VISIBLE);
+            migrationTitle.setText(getResources().getQuantityString(R.plurals.vault_migration_failed,
+                    s.failed.size(), s.failed.size()));
+            StringBuilder sb = new StringBuilder(getString(R.string.vault_migration_failed_body));
+            for (String f : s.failed) sb.append("\n• ").append(f);
+            migrationBody.setText(sb);
+            migrationBar.setVisibility(View.GONE);
+            migrationRetry.setVisibility(View.VISIBLE);
+        } else {
+            migrationCard.setVisibility(View.GONE);
+        }
+        if (!s.running && migrationWasRunning) {
+            migrationWasRunning = false;
+            thumbs.evictAll();
+            reload(); // sizes / thumbnails changed
+        }
     }
 
     private void reload() {
@@ -257,7 +304,7 @@ public class VaultActivity extends AppCompatActivity {
     }
 
     static String storageLabel(int count, long used, long free) {
-        return count + (count == 1 ? " video" : " videos") + " · " + Fmt.size(used) + " used · "
+        return count + (count == 1 ? " video" : " videos") + " · " + (used > 0 ? Fmt.size(used) : "0 MB") + " used · "
                 + Fmt.size(free) + " free on this phone";
     }
 
@@ -432,9 +479,9 @@ public class VaultActivity extends AppCompatActivity {
             Bitmap cached = thumbs.get(e.id);
             h.thumb.setImageBitmap(cached);
             if (cached == null) {
-                final File f = Vault.thumbOf(VaultActivity.this, e);
+                final android.content.Context app = getApplicationContext();
                 io.execute(() -> {
-                    Bitmap b = f.isFile() ? BitmapFactory.decodeFile(f.getAbsolutePath()) : null;
+                    Bitmap b = Vault.loadThumb(app, e); // decrypted in memory only
                     if (b == null) return;
                     handler.post(() -> {
                         if (!VaultLock.isUnlocked()) return;

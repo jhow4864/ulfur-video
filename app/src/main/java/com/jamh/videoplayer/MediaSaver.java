@@ -36,6 +36,15 @@ final class MediaSaver {
      *                         storage (app-specific storage is deleted on uninstall too).
      */
     static Uri save(Context ctx, File src, String displayName, String mime, boolean allowAppFallback) throws IOException {
+        return save(ctx, () -> new FileInputStream(src), displayName, mime, allowAppFallback);
+    }
+
+    /** Something that can be read once, e.g. a decrypting stream over a Private video (1.6.0). */
+    interface Source {
+        InputStream open() throws IOException;
+    }
+
+    static Uri save(Context ctx, Source src, String displayName, String mime, boolean allowAppFallback) throws IOException {
         boolean video = mime.startsWith("video/");
         if (Build.VERSION.SDK_INT >= 29) {
             ContentResolver cr = ctx.getContentResolver();
@@ -50,7 +59,7 @@ final class MediaSaver {
                     : MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY);
             Uri uri = cr.insert(collection, v);
             if (uri == null) throw new IOException("MediaStore insert failed");
-            try (InputStream in = new FileInputStream(src); OutputStream out = cr.openOutputStream(uri)) {
+            try (InputStream in = src.open(); OutputStream out = cr.openOutputStream(uri)) {
                 if (out == null) throw new IOException("Cannot open output");
                 copy(in, out);
             } catch (IOException e) {
@@ -78,8 +87,12 @@ final class MediaSaver {
             dir.mkdirs();
         }
         File dst = uniqueFile(dir, displayName);
-        try (InputStream in = new FileInputStream(src); OutputStream out = new FileOutputStream(dst)) {
+        try (InputStream in = src.open(); OutputStream out = new FileOutputStream(dst)) {
             copy(in, out);
+        } catch (IOException e) {
+            //noinspection ResultOfMethodCallIgnored
+            dst.delete();
+            throw e;
         }
         if (publicOk) {
             MediaScannerConnection.scanFile(ctx, new String[]{dst.getAbsolutePath()}, new String[]{mime}, null);

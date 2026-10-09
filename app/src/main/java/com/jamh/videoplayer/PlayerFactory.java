@@ -141,7 +141,9 @@ public final class PlayerFactory {
                 .setAllowCrossProtocolRedirects(true)
                 .setConnectTimeoutMs(15_000)
                 .setReadTimeoutMs(20_000);
-        DefaultDataSource.Factory dataSourceFactory = new DefaultDataSource.Factory(context, http);
+        // 1.6.0: Private videos are encrypted; VaultDataSource decrypts them with random access.
+        androidx.media3.datasource.DataSource.Factory dataSourceFactory =
+                VaultDataSource.routing(context, new DefaultDataSource.Factory(context, http));
         DefaultExtractorsFactory extractors = new DefaultExtractorsFactory()
                 .setConstantBitrateSeekingEnabled(true);
         DefaultMediaSourceFactory mediaSourceFactory =
@@ -182,6 +184,7 @@ public final class PlayerFactory {
                 .setEnableDecoderFallback(true);
         ExoPlayer player = new ExoPlayer.Builder(context, rf)
                 .setLoadControl(loadControl)
+                .setMediaSourceFactory(VaultDataSource.mediaSourceFactory(context)) // clip editor on Private videos
                 .setAudioAttributes(new AudioAttributes.Builder()
                         .setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(), true)
                 .setHandleAudioBecomingNoisy(true)

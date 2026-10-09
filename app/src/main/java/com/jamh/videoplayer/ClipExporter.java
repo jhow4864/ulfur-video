@@ -207,6 +207,12 @@ final class ClipExporter {
                 .build();
 
         transformer = new Transformer.Builder(ctx)
+                // 1.6.0: reads Private (encrypted) videos through VaultDataSource
+                .setAssetLoaderFactory(new androidx.media3.transformer.DefaultAssetLoaderFactory(ctx,
+                        new androidx.media3.transformer.DefaultDecoderFactory.Builder(ctx).build(),
+                        androidx.media3.common.util.Clock.DEFAULT,
+                        VaultDataSource.mediaSourceFactory(ctx),
+                        new androidx.media3.datasource.DataSourceBitmapLoader(ctx)))
                 .setVideoMimeType(MimeTypes.VIDEO_H264)
                 .setAudioMimeType(MimeTypes.AUDIO_AAC)
                 .addListener(new Transformer.Listener() {
@@ -239,8 +245,9 @@ final class ClipExporter {
         worker = new Thread(() -> {
             File out = exportFile("gif");
             MediaMetadataRetriever mmr = new MediaMetadataRetriever();
+            java.io.Closeable mmrSource = null;
             try {
-                mmr.setDataSource(ctx, spec.uri);
+                mmrSource = VaultMediaDataSource.setDataSource(ctx, mmr, spec.uri);
                 int[] size = displaySize(mmr);
                 if (size[0] <= 0 || size[1] <= 0) throw new IOException("Unknown video size");
                 RectF crop = spec.crop != null ? spec.crop : new RectF(0, 0, 1, 1);
@@ -305,6 +312,7 @@ final class ClipExporter {
                     mmr.release();
                 } catch (Exception ignored) {
                 }
+                VaultMediaDataSource.closeQuietly(mmrSource);
             }
         }, "gif-export");
         worker.start();
@@ -361,16 +369,18 @@ final class ClipExporter {
     /** Display-oriented width/height (rotation applied), or {0, 0} if unknown. */
     static int[] displaySize(Context ctx, Uri uri) {
         MediaMetadataRetriever mmr = new MediaMetadataRetriever();
+        java.io.Closeable src = null;
         try {
-            mmr.setDataSource(ctx, uri);
+            src = VaultMediaDataSource.setDataSource(ctx, mmr, uri);
             return displaySize(mmr);
-        } catch (RuntimeException e) {
+        } catch (RuntimeException | IOException e) {
             return new int[]{0, 0};
         } finally {
             try {
                 mmr.release();
             } catch (Exception ignored) {
             }
+            VaultMediaDataSource.closeQuietly(src);
         }
     }
 
