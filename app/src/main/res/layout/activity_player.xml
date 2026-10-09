@@ -247,15 +247,26 @@
                     android:textColor="#FFFFFFFF"
                     android:textSize="13sp"/>
 
-                <SeekBar
-                    android:id="@+id/seekbar"
+                <!-- 1.6: bookmark ticks drawn over the seek bar (not touchable) -->
+                <FrameLayout
                     android:layout_width="0dp"
                     android:layout_height="40dp"
-                    android:layout_weight="1"
-                    android:progressTint="?attr/colorPrimary"
-                    android:thumbTint="?attr/colorPrimary"
-                    android:secondaryProgressTint="#99FFFFFF"
-                    android:progressBackgroundTint="#55FFFFFF"/>
+                    android:layout_weight="1">
+
+                    <SeekBar
+                        android:id="@+id/seekbar"
+                        android:layout_width="match_parent"
+                        android:layout_height="40dp"
+                        android:progressTint="?attr/colorPrimary"
+                        android:thumbTint="?attr/colorPrimary"
+                        android:secondaryProgressTint="#99FFFFFF"
+                        android:progressBackgroundTint="#55FFFFFF"/>
+
+                    <com.jamh.videoplayer.BookmarkTicksView
+                        android:id="@+id/bookmark_ticks"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"/>
+                </FrameLayout>
 
                 <TextView
                     android:id="@+id/duration"
@@ -276,6 +287,7 @@
 
                 <ImageButton android:id="@+id/btn_lock" style="@style/PlayerIconButton" android:src="@drawable/ic_lock_open" android:contentDescription="Lock screen"/>
                 <ImageButton android:id="@+id/btn_rotation_lock" style="@style/PlayerIconButton" android:src="@drawable/ic_screen_lock_rotation" android:contentDescription="Rotation lock"/>
+                <ImageButton android:id="@+id/btn_bookmark" style="@style/PlayerIconButton" android:src="@drawable/ic_bookmark_add" android:contentDescription="Bookmark this moment (long-press for bookmarks)"/>
                 <View android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1"/>
                 <TextView
                     android:id="@+id/aspect_label"

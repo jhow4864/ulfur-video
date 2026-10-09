@@ -24,6 +24,17 @@
             </LinearLayout>
         </LinearLayout>
 
+        <!-- Bookmarks (1.6) -->
+        <LinearLayout
+            android:id="@+id/row_bookmarks"
+            style="@style/MenuRow">
+            <ImageView style="@style/MenuRowIcon" android:src="@drawable/ic_bookmarks"/>
+            <LinearLayout style="@style/MenuRowTexts">
+                <TextView style="@style/MenuRowTitle" android:text="Bookmarks"/>
+                <TextView android:id="@+id/bookmarks_value" style="@style/MenuRowSubtitle" android:text="Mark moments in this video and jump back to them"/>
+            </LinearLayout>
+        </LinearLayout>
+
         <!-- Night mode / Dialogue -->
         <LinearLayout
             android:id="@+id/row_dialogue"

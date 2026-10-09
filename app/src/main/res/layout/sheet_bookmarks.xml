@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 1.6: bookmarks for the current video (tap = jump, ⋮ = rename / delete). -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:paddingBottom="12dp">
+
+    <com.google.android.material.bottomsheet.BottomSheetDragHandleView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"/>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="20dp"
+        android:paddingEnd="16dp"
+        android:paddingBottom="8dp">
+
+        <View
+            android:layout_width="3dp"
+            android:layout_height="14dp"
+            android:layout_marginEnd="10dp"
+            android:background="@drawable/bg_accent_bar"/>
+
+        <TextView
+            android:id="@+id/bookmarks_title"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Bookmarks"
+            android:textAppearance="@style/TextAppearance.Ulfur.Label"/>
+
+        <TextView
+            android:id="@+id/bookmarks_add"
+            android:layout_width="wrap_content"
+            android:layout_height="40dp"
+            android:background="@drawable/bg_gradient_button"
+            android:drawableStart="@drawable/ic_bookmark_add"
+            android:drawablePadding="6dp"
+            android:drawableTint="@color/on_accent"
+            android:fontFamily="@font/inter_semibold"
+            android:fontFeatureSettings="tnum"
+            android:gravity="center_vertical"
+            android:paddingStart="12dp"
+            android:paddingEnd="16dp"
+            android:text="Add at 0:00"
+            android:textColor="@color/on_accent"
+            android:textSize="14sp"/>
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/bookmarks_empty"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:paddingStart="32dp"
+        android:paddingEnd="32dp"
+        android:paddingTop="20dp"
+        android:paddingBottom="24dp"
+        android:text="No bookmarks yet.\nTap the bookmark button in the player to mark the current moment. Long-press it to open this list."
+        android:textColor="@color/text_secondary"
+        android:textSize="14sp"
+        android:visibility="gone"/>
+
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/bookmarks_list"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:clipToPadding="false"
+        android:nestedScrollingEnabled="true"
+        android:overScrollMode="never"/>
+</LinearLayout>
