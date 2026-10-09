@@ -33,11 +33,27 @@ final class VaultLock implements Application.ActivityLifecycleCallbacks {
 
     static void lock() {
         unlocked = false;
+        pickerOpenSince = 0;
     }
 
     /** Visible for tests: the app moved to the background. */
     static void onAppBackgrounded() {
+        if (pickerOpenSince > 0 && System.currentTimeMillis() - pickerOpenSince < PICKER_GRACE_MS) return;
         unlocked = false;
+    }
+
+    // 1.6.0: the system file picker (backup / restore / export) puts the app in the background.
+    // Don't lock for that (it would ask for the fingerprint again mid-flow), but only while
+    // a picker we opened is showing, and never for longer than PICKER_GRACE_MS.
+    static final long PICKER_GRACE_MS = 5 * 60 * 1000;
+    private static volatile long pickerOpenSince;
+
+    static void pickerOpening() {
+        if (unlocked) pickerOpenSince = System.currentTimeMillis();
+    }
+
+    static void pickerClosed() {
+        pickerOpenSince = 0;
     }
 
     @Override

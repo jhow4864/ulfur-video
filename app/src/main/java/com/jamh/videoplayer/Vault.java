@@ -311,6 +311,11 @@ final class Vault {
         save(ctx, l);
     }
 
+    /** Adds a fully written, verified entry (backup restore). */
+    static synchronized void addEntry(Context ctx, Entry e) throws IOException {
+        add(ctx, e);
+    }
+
     @Nullable
     static Entry findByUri(Context ctx, Uri uri) {
         if (!isVaultUri(uri)) return null;

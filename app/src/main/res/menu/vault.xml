@@ -2,4 +2,7 @@
     <item android:id="@+id/action_lock_now" android:title="@string/vault_lock_now" android:icon="@drawable/ic_lock"
         app:iconTint="?attr/colorOnSurface" app:showAsAction="ifRoom"/>
     <item android:id="@+id/action_vault_trash" android:title="@string/trash_title" app:showAsAction="never"/>
+    <item android:id="@+id/action_vault_backup" android:title="@string/vault_backup" app:showAsAction="never"/>
+    <item android:id="@+id/action_vault_restore" android:title="@string/vault_restore" app:showAsAction="never"/>
+    <item android:id="@+id/action_vault_export_plain" android:title="@string/vault_export_plain" app:showAsAction="never"/>
 </menu>

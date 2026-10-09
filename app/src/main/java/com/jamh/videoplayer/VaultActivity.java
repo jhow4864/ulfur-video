@@ -76,6 +76,7 @@ public class VaultActivity extends AppCompatActivity implements VaultMigration.L
     private View selectionBar;
     private TextView selectAllButton, moveOutButton;
     private ActivityResultLauncher<String> writePermission;
+    private VaultBackupFlow backupFlow;
     // 1.6.0 encryption migration banner
     private View migrationCard;
     private TextView migrationTitle, migrationBody;
@@ -117,6 +118,15 @@ public class VaultActivity extends AppCompatActivity implements VaultMigration.L
                 return true;
             } else if (id == R.id.action_vault_trash) {
                 startActivity(TrashActivity.intent(this, true));
+                return true;
+            } else if (id == R.id.action_vault_backup) {
+                backupFlow.startBackup(new ArrayList<>(entries));
+                return true;
+            } else if (id == R.id.action_vault_restore) {
+                backupFlow.startRestore();
+                return true;
+            } else if (id == R.id.action_vault_export_plain) {
+                backupFlow.startPlainExport(new ArrayList<>(entries));
                 return true;
             }
             return false;
@@ -179,6 +189,7 @@ public class VaultActivity extends AppCompatActivity implements VaultMigration.L
                 showLocked(noLock);
             }
         });
+        backupFlow = new VaultBackupFlow(this, this::reload);
         writePermission = registerForActivityResult(new ActivityResultContracts.RequestPermission(), granted -> {
             List<Vault.Entry> e = pendingMoveOut;
             pendingMoveOut = null;
@@ -210,6 +221,12 @@ public class VaultActivity extends AppCompatActivity implements VaultMigration.L
         super.onDestroy();
         handler.removeCallbacksAndMessages(null);
         io.shutdownNow();
+        backupFlow.shutdown();
+    }
+
+    @VisibleForTesting
+    VaultBackupFlow backupFlow() {
+        return backupFlow;
     }
 
     private void requestUnlock() {
