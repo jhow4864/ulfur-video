@@ -112,4 +112,6 @@
     <string name="dupes_use_suggestion">Suggest</string>
     <string name="dupes_keep_badge">KEEP</string>
     <string name="dupes_none">No duplicates found</string>
+    <!-- 1.9.1 crash safety net -->
+    <string name="safe_mode_banner">Started in safe mode after repeated crashes: Upscale is off and Private encryption is paused for this session. Restart the app to return to normal.</string>
 </resources>

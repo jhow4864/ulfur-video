@@ -132,7 +132,12 @@ public class MainActivity extends AppCompatActivity implements LibraryAdapter.Li
             defaultBanner.setVisibility(View.GONE);
         });
         setSupportActionBar(toolbar);
-        CastSupport.addMiniController(this, R.id.cast_mini_controller);
+        try {
+            CastSupport.addMiniController(this, R.id.cast_mini_controller);
+        } catch (Throwable t) {
+            android.util.Log.e("MainActivity", "Cast mini controller unavailable", t);
+        }
+        findViewById(R.id.safe_mode_banner).setVisibility(CrashGuard.safeMode() ? View.VISIBLE : View.GONE);
 
         View root = findViewById(R.id.root);
         ViewCompat.setOnApplyWindowInsetsListener(root, (v, insets) -> {
@@ -267,12 +272,65 @@ public class MainActivity extends AppCompatActivity implements LibraryAdapter.Li
         }
         lastCanManageMedia = canManage;
         invalidateOptionsMenu();
-        DefaultPlayerHelper.Status status = DefaultPlayerHelper.check(this);
-        updateDefaultBanner(status);
-        if (pendingDefaultCheck) {
-            pendingDefaultCheck = false;
-            reportDefaultResult(status);
+        try {
+            DefaultPlayerHelper.Status status = DefaultPlayerHelper.check(this);
+            updateDefaultBanner(status);
+            if (pendingDefaultCheck) {
+                pendingDefaultCheck = false;
+                reportDefaultResult(status);
+            }
+        } catch (Throwable t) {
+            android.util.Log.e("MainActivity", "default player check failed", t);
         }
+        maybeShowCrashReport();
+    }
+
+    // ---------------------------------------------------------------- 1.9.1 crash report
+
+    private androidx.appcompat.app.AlertDialog crashDialog;
+
+    /** Shows the last crash (filesDir/last_crash.txt) once, with Copy crash log / Share. */
+    androidx.appcompat.app.AlertDialog maybeShowCrashReport() {
+        if (crashDialog != null && crashDialog.isShowing()) return crashDialog;
+        final String report = CrashGuard.pendingReport(this);
+        if (report == null) return null;
+        TextView tv = new TextView(this);
+        tv.setText(report);
+        tv.setTextIsSelectable(true);
+        tv.setTextSize(11);
+        tv.setTypeface(android.graphics.Typeface.MONOSPACE);
+        tv.setTextColor(ContextCompat.getColor(this, R.color.text_secondary));
+        tv.setPadding(dp(20), dp(8), dp(20), dp(8));
+        android.widget.ScrollView sv = new android.widget.ScrollView(this);
+        sv.addView(tv);
+        crashDialog = new MaterialAlertDialogBuilder(this)
+                .setTitle("Ulfur Video crashed last time")
+                .setMessage("Sorry about that. Please send this crash log so it can be fixed.")
+                .setView(sv)
+                .setPositiveButton("Copy crash log", null)
+                .setNeutralButton("Share", null)
+                .setNegativeButton("Dismiss", (d, w) -> CrashGuard.clearReport(this))
+                .show();
+        crashDialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE).setOnClickListener(v -> {
+            android.content.ClipboardManager cm = (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+            if (cm != null) cm.setPrimaryClip(android.content.ClipData.newPlainText("Ulfur Video crash log", report));
+            Toast.makeText(this, "Crash log copied", Toast.LENGTH_SHORT).show();
+            CrashGuard.clearReport(this);
+            crashDialog.dismiss();
+        });
+        crashDialog.getButton(android.content.DialogInterface.BUTTON_NEUTRAL).setOnClickListener(v -> {
+            Intent send = new Intent(Intent.ACTION_SEND).setType("text/plain")
+                    .putExtra(Intent.EXTRA_SUBJECT, "Ulfur Video crash log")
+                    .putExtra(Intent.EXTRA_TEXT, report);
+            try {
+                startActivity(Intent.createChooser(send, "Share crash log"));
+                CrashGuard.clearReport(this);
+                crashDialog.dismiss();
+            } catch (ActivityNotFoundException e) {
+                Toast.makeText(this, "No app to share with", Toast.LENGTH_SHORT).show();
+            }
+        });
+        return crashDialog;
     }
 
     @Override
@@ -721,7 +779,13 @@ public class MainActivity extends AppCompatActivity implements LibraryAdapter.Li
             return true;
         }
         getMenuInflater().inflate(R.menu.main, menu);
-        CastSupport.setUpMenuButton(this, menu, R.id.media_route_menu_item);
+        try {
+            CastSupport.setUpMenuButton(this, menu, R.id.media_route_menu_item);
+        } catch (Throwable t) {
+            android.util.Log.e("MainActivity", "Cast button unavailable", t);
+            MenuItem castItem = menu.findItem(R.id.media_route_menu_item);
+            if (castItem != null) castItem.setVisible(false);
+        }
         searchItem = menu.findItem(R.id.action_search);
         SearchView sv = (SearchView) searchItem.getActionView();
         if (sv != null) {
@@ -829,7 +893,11 @@ public class MainActivity extends AppCompatActivity implements LibraryAdapter.Li
             startActivity(TrashActivity.intent(this, false));
             return true;
         } else if (id == R.id.action_duplicates) {
-            startActivity(new Intent(this, DuplicatesActivity.class));
+            try {
+                startActivity(new Intent(this, DuplicatesActivity.class));
+            } catch (Throwable t) {
+                Toast.makeText(this, "Couldn't open Find duplicates", Toast.LENGTH_SHORT).show();
+            }
             return true;
         } else if (id == R.id.action_refresh) {
             refresh();

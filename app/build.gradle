@@ -30,8 +30,8 @@ android {
         applicationId 'com.jamh.videoplayer'
         minSdk 24
         targetSdk 34
-        versionCode 14
-        versionName '1.9.0'
+        versionCode 15
+        versionName '1.9.1'
 
         // 1.8.0 feature flag: "Upscale on export (2x)" (true only when the native upscaler is built)
         buildConfigField 'boolean', 'UPSCALE_EXPORT', nativeUpscale ? 'true' : 'false'

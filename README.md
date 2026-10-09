@@ -232,3 +232,21 @@ Library ⋮ → **Find duplicates…** (`DuplicatesActivity`, engine in `Duplica
   pruning and no Private hashes on disk, cancel, real hashing of a library file vs its Private copy,
   the screen: suggestions, last-copy guard, combined Trash + Undo, declined prompt, locking Private).
   Preview: `previews/v19_duplicates.png`.
+
+## v1.9.1 (versionCode 15): crash safety net (hotfix)
+
+Reported: 1.9.0 closed immediately on the first launch after updating from 1.7.0 / 1.6.0. Static review
+and the 1.7 → 1.9 diff found no startup code change (the native Real-ESRGAN library is only loaded
+lazily, guarded, from the clip editor; `minifyEnabled false`, so nothing is stripped). This release makes
+startup defensive and makes the next crash reportable:
+
+- `CrashGuard`: any uncaught crash is written to `files/last_crash.txt` (version, Android version,
+  device, thread, ms since start, stack trace). The next launch shows it in a dialog with
+  **Copy crash log** and **Share** (then it is deleted).
+- **Safe mode**: two crashes in a row, each within 10 s of the process starting, make the next start a
+  safe one: Upscale forced Off (the saved choice is kept), the Private encryption migration skipped, and
+  a "Started in safe mode" banner in the library. Staying up for 10 s clears the counter.
+- `Application.onCreate`: `VaultLock.install` and `VaultMigration.start` wrapped in try/catch; library
+  Cast mini controller / Cast button, the default-player check and the Find duplicates entry guarded;
+  `GpuFrameTimer` creation guarded in `UpscaleShaderProgram` (timing is diagnostics only).
+- Tests: `V191CrashGuardTest`.

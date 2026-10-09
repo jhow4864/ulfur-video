@@ -28,7 +28,7 @@ public final class Prefs {
     public static boolean dialogueBoost(Context c) { return s(c).getBoolean("dialogue_boost", false); }
     public static void setDialogueBoost(Context c, boolean v) { s(c).edit().putBoolean("dialogue_boost", v).apply(); }
     /** 1.5.0 Upscale: 0 = Off, 1 = Balanced, 2 = Sharp ({@link Upscaler}). Global, default Off. */
-    public static int upscaleMode(Context c) { return Upscaler.sanitizeMode(s(c).getInt("upscale_mode", Upscaler.MODE_OFF)); }
+    public static int upscaleMode(Context c) { if (CrashGuard.safeMode()) return Upscaler.MODE_OFF; return Upscaler.sanitizeMode(s(c).getInt("upscale_mode", Upscaler.MODE_OFF)); }
     public static void setUpscaleMode(Context c, int v) { s(c).edit().putInt("upscale_mode", Upscaler.sanitizeMode(v)).apply(); }
     public static boolean backgroundAudio(Context c) { return s(c).getBoolean("background_audio", false); }
     public static void setBackgroundAudio(Context c, boolean v) { s(c).edit().putBoolean("background_audio", v).apply(); }

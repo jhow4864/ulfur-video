@@ -35,6 +35,21 @@
         android:layout_height="1dp"
         android:background="@color/stroke"/>
 
+    <!-- 1.9.1: shown after two quick crashes in a row -->
+    <TextView
+        android:id="@+id/safe_mode_banner"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="12dp"
+        android:layout_marginEnd="12dp"
+        android:layout_marginTop="10dp"
+        android:background="@color/warn_bg"
+        android:padding="12dp"
+        android:text="@string/safe_mode_banner"
+        android:textColor="@color/text_primary"
+        android:textSize="13sp"
+        android:visibility="gone"/>
+
     <com.google.android.material.card.MaterialCardView
         android:id="@+id/default_banner"
         android:layout_width="match_parent"
