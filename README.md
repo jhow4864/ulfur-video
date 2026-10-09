@@ -86,3 +86,34 @@ given with `-Pulfur.keystoreProperties=...` or `ULFUR_VIDEO_KEYSTORE_PROPERTIES`
 - Local playback resumes after 250 ms buffered (500 ms after a rebuffer) instead of 1.5 s / 3 s; streaming keeps the old values.
 - The background scrub-thumbnail sweep pauses for 4 s after any seek/skip/rebuffer so it doesn't compete with the player for the decoder and disk.
 - Private (vault) videos are plain files served through FileProvider and are seekable (lseek), so they were not the cause.
+
+## v1.5.0 (versionCode 9): real-time Upscale
+
+Live GPU upscale + sharpen while playing (nothing is saved). Built on Media3 video effects
+(`ExoPlayer.setVideoEffects` + a custom `GlEffect` / `BaseGlShaderProgram`).
+
+- **Toggle**: "HD✦" button in the player's top bar (tap: Off → Balanced → Sharp; long-press: picker),
+  also "Upscale" at the top of the ⋮ player menu. The icon turns Ulfur red when on, and a small
+  gradient-bordered label shows e.g. "Upscale · Balanced / 640×360 → 1920×1080". Global setting
+  (`Prefs.upscaleMode`, default Off).
+- **Pipeline** (`UpscaleShaderProgram`):
+  - video smaller than the area it's drawn in → **FSR 1.0 EASU** to that size (capped at ~1080p
+    worth of pixels and 4×), then **RCAS** sharpening (Balanced 0.8 stops, Sharp 0.25 stops);
+  - video already fills the screen → Balanced passes it through, Sharp applies light RCAS only
+    (never for > 1080p, e.g. 4K);
+  - "Lite" quality = Catmull-Rom bicubic (9 bilinear taps) + RCAS, used automatically as a fallback.
+- **Shaders**: `app/src/main/assets/shaders/ulfur_fsr_easu.glsl`, `ulfur_rcas.glsl`,
+  `ulfur_catmull_rom.glsl`, `ulfur_copy.glsl`, `ulfur_upscale_vertex.glsl` (GLSL ES 1.00, validated
+  with glslangValidator). EASU/RCAS are ports of AMD FidelityFX FSR 1.0 (`ffx_fsr1.h`),
+  © 2021 Advanced Micro Devices, Inc., MIT licence: `app/src/main/assets/licenses/FSR1_LICENSE.txt`.
+- **Safety nets**:
+  - The GL pipeline is only created when Upscale is on (with Off, playback is exactly 1.4.2's).
+  - HDR videos are never processed: the player is rebuilt without the pipeline when an HDR track is
+    detected, so HDR output / tone-mapping is untouched.
+  - GL init/processing error → retry with Lite → turn Upscale off (persisted) with a message.
+  - Frame-drop watchdog: two 2 s windows with > 12 % dropped frames → Lite → paused for the session.
+  - Paused in picture-in-picture; re-targets on rotation / aspect-mode changes; rotation is applied
+    by the decoder before the effect. Seek settings from 1.4.2 are unchanged.
+- **Before/after**: `design/upscale-before-after.png`, rendered by running these exact shaders through
+  desktop Mesa GL (`tools/upscale-compare/render.py`, `compose.py`) on a 640×360 frame of
+  Big Buck Bunny (© Blender Foundation, CC BY 3.0).

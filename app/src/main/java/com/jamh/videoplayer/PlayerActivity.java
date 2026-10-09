@@ -53,6 +53,8 @@ import androidx.core.view.WindowInsetsCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
 import androidx.lifecycle.Lifecycle;
 import androidx.media3.common.C;
+import androidx.media3.common.ColorInfo;
+import androidx.media3.common.Effect;
 import androidx.media3.common.Format;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.MediaMetadata;
@@ -65,6 +67,7 @@ import androidx.media3.common.TrackSelectionParameters;
 import androidx.media3.common.Tracks;
 import androidx.media3.common.VideoSize;
 import androidx.media3.common.util.UnstableApi;
+import androidx.media3.exoplayer.DecoderCounters;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.exoplayer.SeekParameters;
 import androidx.media3.exoplayer.analytics.AnalyticsListener;
@@ -205,6 +208,26 @@ public class PlayerActivity extends AppCompatActivity {
     /** 1.4.2: target of the last keyframe seek issued during the current scrub (-1 = none yet). */
     private long lastScrubSeekTarget = -1;
 
+    // 1.5.0 real-time upscaling (GPU shader via Media3 video effects; nothing is saved)
+    private int upscaleMode = Upscaler.MODE_OFF;
+    private int upscaleQuality = Upscaler.QUALITY_FSR;
+    /** The current player was built with the effects pipeline (setVideoEffects before prepare). */
+    private boolean upscalePipeline;
+    /** Auto-disabled by the frame-drop watchdog for the rest of this session. */
+    private boolean upscaleSessionOff;
+    /** The current video is HDR: never processed (the player is built without the pipeline). */
+    private boolean currentItemHdr;
+    private int upscaleGlFailures;
+    private int effectBoxW, effectBoxH;
+    private String appliedEffectsKey = "";
+    private final Upscaler.Watchdog upscaleWatchdog = new Upscaler.Watchdog();
+    private long lastPlaybackDisturbanceAt;
+    private long watchdogLastDropped = -1;
+    private long watchdogLastAt;
+    private ImageButton btnUpscale;
+    private final Runnable upscaleWatchdogTick = this::onUpscaleWatchdogTick;
+    private final Runnable applyUpscaleRunnable = this::applyUpscaleEffects;
+
     // Diagnostics
     private String videoDecoderName = "-";
     private String audioDecoderName = "-";
@@ -295,6 +318,7 @@ public class PlayerActivity extends AppCompatActivity {
 
         preferSoftware = Prefs.preferSoftwareDecoder(this);
         backgroundAudio = Prefs.backgroundAudio(this);
+        upscaleMode = Prefs.upscaleMode(this);
         updateBadges();
         // Open in whatever orientation the phone is in and follow the system auto-rotate setting
         // (no forced landscape). "Auto-rotate to match video" in the menu restores the old behaviour.
@@ -363,6 +387,9 @@ public class PlayerActivity extends AppCompatActivity {
     protected void onStart() {
         super.onStart();
         handler.post(progressRunnable);
+        handler.removeCallbacks(upscaleWatchdogTick);
+        watchdogLastDropped = -1;
+        handler.postDelayed(upscaleWatchdogTick, Upscaler.Watchdog.WINDOW_MS);
         if (currentPrivate && !VaultLock.isUnlocked()) coverForUnlock();
         if (releasedInStop) {
             releasedInStop = false;
@@ -417,6 +444,7 @@ public class PlayerActivity extends AppCompatActivity {
     protected void onStop() {
         super.onStop();
         handler.removeCallbacks(progressRunnable);
+        if (!isInPip()) handler.removeCallbacks(upscaleWatchdogTick);
         if (!isInPip()) stopThumbnails(); // left the player: cancel thumbnail extraction
         if (!isInPip() && player != null) {
             saveResume();
@@ -766,7 +794,13 @@ public class PlayerActivity extends AppCompatActivity {
                 ? PlayerFactory.tierForBitrate(bitrateBps, PlayerFactory.bufferBudgetBytes())
                 : PlayerFactory.TIER_NETWORK;
         releasedInStop = false;
+        currentItemHdr = false; // re-detected in onTracksChanged
+        boolean started = getLifecycle().getCurrentState().isAtLeast(Lifecycle.State.STARTED);
         if (player == null) {
+            bufferTier = wantTier;
+            rebuildPlayer();
+        } else if (started && upscaleWanted() != upscalePipeline) {
+            // 1.5.0: the effects pipeline can only be added/removed when the player is built.
             bufferTier = wantTier;
             rebuildPlayer();
         } else if (wantTier != bufferTier) {
@@ -853,6 +887,13 @@ public class PlayerActivity extends AppCompatActivity {
         releasePlayer();
         dialogueBoost = new DialogueBoostProcessor(Prefs.dialogueBoost(this));
         player = PlayerFactory.create(this, preferSoftware, bufferTier, dialogueBoost);
+        // 1.5.0: video effects must be set before prepare() to create the GL pipeline. Only done when
+        // upscaling is wanted, so with Upscale off (and for HDR videos) playback is exactly as before.
+        upscalePipeline = upscaleWanted();
+        appliedEffectsKey = "";
+        if (upscalePipeline) applyUpscaleEffects();
+        upscaleWatchdog.reset();
+        watchdogLastDropped = -1;
         player.addListener(playerListener);
         createSession();
         player.addAnalyticsListener(analyticsListener);
@@ -890,6 +931,7 @@ public class PlayerActivity extends AppCompatActivity {
         @Override
         public void onPlaybackStateChanged(int state) {
             if (state == Player.STATE_BUFFERING && thumbs != null) thumbs.holdOff(SEEK_THUMB_HOLDOFF_MS);
+            if (state != Player.STATE_READY) lastPlaybackDisturbanceAt = SystemClock.elapsedRealtime();
             if (state == Player.STATE_BUFFERING && !scrubbing) {
                 // Only show the spinner if buffering lasts longer than ~500 ms.
                 handler.removeCallbacks(showSpinnerRunnable);
@@ -928,7 +970,33 @@ public class PlayerActivity extends AppCompatActivity {
 
         @Override
         public void onPlayerError(@NonNull PlaybackException error) {
+            if (upscalePipeline && isVideoEffectsError(error)) {
+                handler.post(PlayerActivity.this::onUpscaleGlFailure);
+                return;
+            }
             showErrorDialog(error);
+        }
+
+        @Override
+        public void onTracksChanged(@NonNull Tracks tracks) {
+            boolean hdr = isHdr(tracks);
+            if (hdr == currentItemHdr) return;
+            currentItemHdr = hdr;
+            if (hdr && upscalePipeline) {
+                // HDR is never upscaled: rebuild without the GL pipeline so HDR output is untouched.
+                handler.post(() -> {
+                    rebuildAtCurrentPosition();
+                    if (upscaleMode != Upscaler.MODE_OFF) {
+                        showUpscaleToast("Upscale paused", "HDR video: shown as-is");
+                    }
+                });
+            }
+        }
+
+        @Override
+        public void onPositionDiscontinuity(@NonNull Player.PositionInfo oldPosition,
+                                            @NonNull Player.PositionInfo newPosition, int reason) {
+            lastPlaybackDisturbanceAt = SystemClock.elapsedRealtime();
         }
     };
 
@@ -1128,6 +1196,20 @@ public class PlayerActivity extends AppCompatActivity {
         pip.setOnClickListener(v -> enterPip());
         pip.setVisibility(pipSupported() ? View.VISIBLE : View.GONE);
         findViewById(R.id.btn_more).setOnClickListener(this::showMoreMenu);
+        btnUpscale = findViewById(R.id.btn_upscale);
+        btnUpscale.setOnClickListener(v -> { setUpscaleMode(Upscaler.nextMode(upscaleMode)); scheduleHide(); });
+        btnUpscale.setOnLongClickListener(v -> { showUpscaleDialog(); return true; });
+        updateUpscaleButton();
+        View surface = playerView.getVideoSurfaceView();
+        if (surface != null) {
+            // Re-target the upscaler when the drawn video area changes (rotation, aspect mode, PiP).
+            surface.addOnLayoutChangeListener((sv, l, t, r, b, ol, ot, or, ob) -> {
+                if (r - l != or - ol || b - t != ob - ot) {
+                    handler.removeCallbacks(applyUpscaleRunnable);
+                    handler.postDelayed(applyUpscaleRunnable, 250);
+                }
+            });
+        }
         findViewById(R.id.btn_aspect).setOnClickListener(v -> {
             aspectMode = (aspectMode + 1) % ASPECT_NAMES.length;
             applyAspect(true);
@@ -1874,6 +1956,9 @@ public class PlayerActivity extends AppCompatActivity {
         v.findViewById(R.id.row_sleep).setOnClickListener(x -> { sheet.dismiss(); showSleepTimerDialog(); });
         v.findViewById(R.id.row_clip).setOnClickListener(x -> { if (canClip) { sheet.dismiss(); openClipEditor(); } });
         v.findViewById(R.id.row_info).setOnClickListener(x -> { sheet.dismiss(); showInfoDialog(); });
+        TextView upscaleValue = v.findViewById(R.id.upscale_value);
+        upscaleValue.setText(upscaleSheetSubtitle());
+        v.findViewById(R.id.row_upscale).setOnClickListener(x -> { sheet.dismiss(); showUpscaleDialog(); });
     }
 
     private void setAutoRotateToVideo(boolean on) {
@@ -2103,12 +2188,243 @@ public class PlayerActivity extends AppCompatActivity {
                 : "local tier " + bufferTier + " · " + t[2] / 1000 + " s back / " + t[0] / 1000 + "–" + t[1] / 1000
                 + " s ahead · capped at " + PlayerFactory.bufferBudgetBytes() / (1 << 20) + " MB");
         sb.append("\nDecoder preference: ").append(preferSoftware ? "software first" : "hardware first (auto fallback)");
+        sb.append("\n\nUpscale: ").append(upscaleStatusText());
         new MaterialAlertDialogBuilder(this)
                 .setTitle("Playback info")
                 .setMessage(sb.toString())
                 .setPositiveButton(android.R.string.ok, null)
                 .setOnDismissListener(d -> hideSystemUi())
                 .show();
+    }
+
+    // =================================================================== upscaling (1.5.0)
+
+    private boolean upscaleWanted() {
+        return upscaleMode != Upscaler.MODE_OFF && !upscaleSessionOff && !currentItemHdr;
+    }
+
+    /** Effects are actually processing frames (pipeline present, wanted, and not in the PiP window). */
+    private boolean upscaleRunning() {
+        return upscalePipeline && upscaleWanted() && !isInPip();
+    }
+
+    /** Size of the area the video is drawn into (the PlayerView's surface), or the screen before layout. */
+    private void updateEffectBox() {
+        View s = playerView == null ? null : playerView.getVideoSurfaceView();
+        int w = s == null ? 0 : s.getWidth();
+        int h = s == null ? 0 : s.getHeight();
+        if (w <= 0 || h <= 0) {
+            android.util.DisplayMetrics dm = getResources().getDisplayMetrics();
+            w = dm.widthPixels;
+            h = dm.heightPixels;
+        }
+        effectBoxW = w;
+        effectBoxH = h;
+    }
+
+    /** Pushes the current upscale effect (or none) to the player; no-op if nothing changed. */
+    private void applyUpscaleEffects() {
+        if (player == null || !upscalePipeline) return;
+        updateEffectBox();
+        boolean run = upscaleRunning();
+        String key = run ? upscaleMode + "/" + upscaleQuality + "/" + effectBoxW + "x" + effectBoxH : "none";
+        if (key.equals(appliedEffectsKey)) return;
+        appliedEffectsKey = key;
+        List<Effect> effects = run
+                ? Collections.singletonList(new UpscaleEffect(upscaleMode, upscaleQuality, effectBoxW, effectBoxH))
+                : Collections.emptyList();
+        try {
+            player.setVideoEffects(effects);
+        } catch (RuntimeException e) {
+            // e.g. media3-effect missing or the renderer refusing effects: behave like a GL failure.
+            handler.post(this::onUpscaleGlFailure);
+        }
+    }
+
+    /** Rebuilds the player (e.g. to add or remove the effects pipeline) and continues where we were. */
+    private void rebuildAtCurrentPosition() {
+        if (player == null || currentUri == null) return;
+        long pos = player.getCurrentPosition();
+        boolean pwr = player.getPlayWhenReady();
+        rebuildPlayer();
+        player.setWakeMode(isNetwork(currentUri) ? C.WAKE_MODE_NETWORK : C.WAKE_MODE_LOCAL);
+        player.setMediaItem(buildMediaItem(), pos);
+        player.prepare();
+        player.setPlayWhenReady(pwr && !(currentPrivate && !VaultLock.isUnlocked()));
+    }
+
+    void setUpscaleMode(int mode) {
+        upscaleMode = Upscaler.sanitizeMode(mode);
+        Prefs.setUpscaleMode(this, upscaleMode);
+        upscaleSessionOff = false;
+        upscaleWatchdog.reset();
+        watchdogLastDropped = -1;
+        updateUpscaleButton();
+        String detail;
+        if (upscaleMode == Upscaler.MODE_OFF) {
+            applyUpscaleEffects(); // instant; the pipeline itself goes with the next player rebuild
+            detail = null;
+        } else if (currentItemHdr) {
+            detail = "Paused for HDR video";
+        } else if (player != null && !upscalePipeline) {
+            rebuildAtCurrentPosition(); // adds the GL pipeline (brief reload at the same position)
+            detail = upscalePlanText();
+        } else {
+            applyUpscaleEffects();
+            detail = upscalePlanText();
+        }
+        showUpscaleToast(upscaleMode == Upscaler.MODE_OFF ? "Upscale off" : "Upscale · " + Upscaler.modeLabel(upscaleMode), detail);
+    }
+
+    private final Runnable hideUpscaleToast = () -> {
+        View t = findViewById(R.id.upscale_toast);
+        if (t != null) t.animate().alpha(0f).setDuration(180).withEndAction(() -> t.setVisibility(View.GONE)).start();
+    };
+
+    /** Quick Ulfur-styled label under the top bar (title + optional detail line), ~1.6 s. */
+    void showUpscaleToast(String title, @androidx.annotation.Nullable String detail) {
+        View t = findViewById(R.id.upscale_toast);
+        if (t == null || isInPip()) return;
+        ((TextView) findViewById(R.id.upscale_toast_title)).setText(title);
+        TextView d = findViewById(R.id.upscale_toast_detail);
+        d.setText(detail == null ? "" : detail);
+        d.setVisibility(detail == null ? View.GONE : View.VISIBLE);
+        t.animate().cancel();
+        t.setAlpha(1f);
+        t.setVisibility(View.VISIBLE);
+        handler.removeCallbacks(hideUpscaleToast);
+        handler.postDelayed(hideUpscaleToast, 1_600);
+    }
+
+    private void showUpscaleDialog() {
+        handler.removeCallbacks(hideControlsRunnable);
+        String[] items = {
+                "Off",
+                "Balanced: FSR upscale + gentle sharpening",
+                "Sharp: FSR upscale + strong sharpening"};
+        new MaterialAlertDialogBuilder(this)
+                .setTitle("Upscale")
+                .setSingleChoiceItems(items, upscaleMode, (d, which) -> {
+                    d.dismiss();
+                    if (which != upscaleMode) setUpscaleMode(which);
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .setOnDismissListener(d -> { hideSystemUi(); scheduleHide(); })
+                .show();
+    }
+
+    void updateUpscaleButton() {
+        if (btnUpscale == null) return;
+        boolean on = upscaleMode != Upscaler.MODE_OFF;
+        androidx.core.widget.ImageViewCompat.setImageTintList(btnUpscale, ColorStateList.valueOf(
+                on ? ContextCompat.getColor(this, R.color.accent) : 0xFFFFFFFF));
+        btnUpscale.setActivated(on);
+        btnUpscale.setContentDescription("Upscale: " + Upscaler.modeLabel(upscaleMode));
+    }
+
+    /** "640×360 → 1920×1080" for the current video, or null before the size is known. */
+    @androidx.annotation.Nullable
+    private String upscalePlanText() {
+        if (player == null) return null;
+        VideoSize vs = player.getVideoSize();
+        if (vs.width <= 0 || vs.height <= 0) return null;
+        updateEffectBox();
+        int w = vs.pixelWidthHeightRatio > 0 && vs.pixelWidthHeightRatio != 1f
+                ? Math.round(vs.width * vs.pixelWidthHeightRatio) : vs.width;
+        return Upscaler.plan(w, vs.height, effectBoxW, effectBoxH, upscaleMode).describe(w, vs.height);
+    }
+
+    String upscaleSheetSubtitle() {
+        if (upscaleMode == Upscaler.MODE_OFF) return "Off · sharper low-res video, upscaled live on the GPU";
+        String s = Upscaler.modeLabel(upscaleMode);
+        if (currentItemHdr) return s + " · paused for HDR video";
+        if (upscaleSessionOff) return s + " · paused (this phone couldn't keep up)";
+        return s + " · " + (upscaleQuality == Upscaler.QUALITY_LITE ? "Lite" : "FSR 1.0");
+    }
+
+    private String upscaleStatusText() {
+        if (upscaleMode == Upscaler.MODE_OFF) return "off";
+        StringBuilder sb = new StringBuilder(Upscaler.modeLabel(upscaleMode));
+        if (currentItemHdr) return sb.append(" · paused for HDR video").toString();
+        if (upscaleSessionOff) return sb.append(" · paused: frames were dropping").toString();
+        if (!upscalePipeline) return sb.append(" · starts with the next video").toString();
+        sb.append(" · ").append(Upscaler.qualityLabel(upscaleQuality));
+        if (isInPip()) return sb.append(" · paused in PiP").toString();
+        String plan = upscalePlanText();
+        if (plan != null) sb.append("\n").append(plan);
+        return sb.toString();
+    }
+
+    static boolean isVideoEffectsError(PlaybackException e) {
+        return e.errorCode == PlaybackException.ERROR_CODE_VIDEO_FRAME_PROCESSOR_INIT_FAILED
+                || e.errorCode == PlaybackException.ERROR_CODE_VIDEO_FRAME_PROCESSING_FAILED;
+    }
+
+    static boolean isHdr(Tracks tracks) {
+        for (Tracks.Group g : tracks.getGroups()) {
+            if (g.getType() != C.TRACK_TYPE_VIDEO || !g.isSelected()) continue;
+            for (int i = 0; i < g.length; i++) {
+                if (g.isTrackSelected(i) && ColorInfo.isTransferHdr(g.getTrackFormat(i).colorInfo)) return true;
+            }
+        }
+        return false;
+    }
+
+    /** GPU couldn't build or run the shaders: FSR → Lite once, then turn Upscale off for good. */
+    private void onUpscaleGlFailure() {
+        upscaleGlFailures++;
+        String msg;
+        if (currentItemHdr) {
+            msg = "Upscale paused for this HDR video";
+        } else if (upscaleQuality == Upscaler.QUALITY_FSR && upscaleGlFailures == 1) {
+            upscaleQuality = Upscaler.QUALITY_LITE;
+            msg = "Upscale switched to Lite: this phone's GPU couldn't run FSR";
+        } else {
+            upscaleMode = Upscaler.MODE_OFF;
+            Prefs.setUpscaleMode(this, Upscaler.MODE_OFF);
+            msg = "Upscale turned off: this phone's GPU couldn't run it";
+        }
+        updateUpscaleButton();
+        rebuildAtCurrentPosition();
+        Snackbar.make(root, msg, Snackbar.LENGTH_LONG).show();
+    }
+
+    /** Every {@link Upscaler.Watchdog#WINDOW_MS}: steps down if the upscaler makes frames drop. */
+    private void onUpscaleWatchdogTick() {
+        handler.postDelayed(upscaleWatchdogTick, Upscaler.Watchdog.WINDOW_MS);
+        long now = SystemClock.elapsedRealtime();
+        DecoderCounters dc = player == null ? null : player.getVideoDecoderCounters();
+        boolean steady = player != null && upscaleRunning() && player.isPlaying() && !scrubbing
+                && player.getPlaybackState() == Player.STATE_READY
+                && now - lastPlaybackDisturbanceAt > 1_500 && dc != null;
+        if (!steady) {
+            watchdogLastDropped = -1;
+            return;
+        }
+        dc.ensureUpdated();
+        long dropped = dc.droppedBufferCount;
+        if (watchdogLastDropped >= 0 && dropped >= watchdogLastDropped) {
+            Format f = player.getVideoFormat();
+            float fps = f != null && f.frameRate > 0 ? f.frameRate : 30f;
+            double expected = (now - watchdogLastAt) / 1000.0 * fps * player.getPlaybackParameters().speed;
+            if (upscaleWatchdog.onWindow(dropped - watchdogLastDropped, expected)) stepDownUpscale();
+        }
+        watchdogLastDropped = dropped;
+        watchdogLastAt = now;
+    }
+
+    private void stepDownUpscale() {
+        String msg;
+        if (upscaleQuality == Upscaler.QUALITY_FSR) {
+            upscaleQuality = Upscaler.QUALITY_LITE;
+            msg = "Upscale switched to Lite to keep playback smooth";
+        } else {
+            upscaleSessionOff = true;
+            msg = "Upscale paused: this phone couldn't keep up. It will try again next time.";
+        }
+        applyUpscaleEffects();
+        updateUpscaleButton();
+        Snackbar.make(root, msg, Snackbar.LENGTH_LONG).show();
     }
 
     // =================================================================== resume
@@ -2239,7 +2555,9 @@ public class PlayerActivity extends AppCompatActivity {
             hideScrubPreview();
             btnUnlock.setVisibility(View.GONE);
             setZoom(1f);
+            applyUpscaleEffects(); // no upscaling in the small PiP window
         } else {
+            applyUpscaleEffects();
             if (!getLifecycle().getCurrentState().isAtLeast(Lifecycle.State.STARTED)) {
                 // PiP window was dismissed: pause and free the decoders (onStart rebuilds).
                 if (player != null) player.pause();

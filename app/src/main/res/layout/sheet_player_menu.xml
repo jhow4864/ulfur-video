@@ -13,6 +13,17 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"/>
 
+        <!-- Upscale (1.5.0) -->
+        <LinearLayout
+            android:id="@+id/row_upscale"
+            style="@style/MenuRow">
+            <ImageView style="@style/MenuRowIcon" android:src="@drawable/ic_upscale"/>
+            <LinearLayout style="@style/MenuRowTexts">
+                <TextView style="@style/MenuRowTitle" android:text="Upscale"/>
+                <TextView android:id="@+id/upscale_value" style="@style/MenuRowSubtitle" android:text="Off"/>
+            </LinearLayout>
+        </LinearLayout>
+
         <!-- Night mode / Dialogue -->
         <LinearLayout
             android:id="@+id/row_dialogue"

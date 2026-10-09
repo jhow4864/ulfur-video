@@ -1,0 +1,18 @@
+<!-- Ulfur Video 1.5.0: "Upscale" icon - an HD frame with a sparkle (tinted accent when on). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <!-- Frame, open at the top-right corner for the sparkle -->
+    <path android:strokeColor="@android:color/white" android:strokeWidth="1.7"
+        android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:pathData="M14.5,6.5H4.2a2,2 0,0 0,-2,2v8.3a2,2 0,0 0,2,2h11.1a2,2 0,0 0,2,-2v-5.6"/>
+    <!-- H -->
+    <path android:strokeColor="@android:color/white" android:strokeWidth="1.6" android:strokeLineCap="round"
+        android:pathData="M5.4,10.2v5M8.6,10.2v5M5.4,12.7h3.2"/>
+    <!-- D -->
+    <path android:strokeColor="@android:color/white" android:strokeWidth="1.6" android:strokeLineJoin="round"
+        android:pathData="M10.9,10.2v5h1.3a2.5,2.5 0,0 0,0,-5z"/>
+    <!-- Sparkle -->
+    <path android:fillColor="@android:color/white"
+        android:pathData="M19.6,1.2Q20.1,4.3 23,4.8Q20.1,5.3 19.6,8.4Q19.1,5.3 16.2,4.8Q19.1,4.3 19.6,1.2z"/>
+</vector>

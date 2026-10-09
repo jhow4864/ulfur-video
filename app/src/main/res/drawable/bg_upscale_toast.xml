@@ -1,0 +1,16 @@
+<!-- 1.5.0 Upscale label: dark Ulfur pill with the accent gradient as a 1.5dp border. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <corners android:radius="22dp"/>
+            <gradient android:angle="0" android:startColor="@color/accent_start"
+                android:centerColor="@color/accent_mid" android:endColor="@color/accent_end"/>
+        </shape>
+    </item>
+    <item android:left="1.5dp" android:top="1.5dp" android:right="1.5dp" android:bottom="1.5dp">
+        <shape android:shape="rectangle">
+            <corners android:radius="20.5dp"/>
+            <solid android:color="#F20E0E12"/>
+        </shape>
+    </item>
+</layer-list>

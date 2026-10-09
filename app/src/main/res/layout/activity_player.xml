@@ -197,6 +197,7 @@
                 android:textSize="15sp"
                 android:textStyle="bold"/>
 
+            <ImageButton android:id="@+id/btn_upscale" style="@style/PlayerIconButton" android:src="@drawable/ic_upscale" android:contentDescription="Upscale"/>
             <ImageButton android:id="@+id/btn_audio" style="@style/PlayerIconButton" android:src="@drawable/ic_audiotrack" android:contentDescription="Audio track"/>
             <ImageButton android:id="@+id/btn_subs" style="@style/PlayerIconButton" android:src="@drawable/ic_subtitles" android:contentDescription="Subtitles"/>
             <ImageButton android:id="@+id/btn_pip" style="@style/PlayerIconButton" android:src="@drawable/ic_pip" android:contentDescription="Picture-in-picture"/>
@@ -326,6 +327,50 @@
             android:textSize="14sp"
             android:textStyle="bold"
             android:fontFeatureSettings="tnum"/>
+    </LinearLayout>
+
+    <!-- 1.5.0: quick label shown when Upscale is toggled -->
+    <LinearLayout
+        android:id="@+id/upscale_toast"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|center_horizontal"
+        android:layout_marginTop="88dp"
+        android:background="@drawable/bg_upscale_toast"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="14dp"
+        android:paddingEnd="18dp"
+        android:paddingTop="9dp"
+        android:paddingBottom="9dp"
+        android:visibility="gone">
+        <ImageView
+            android:layout_width="26dp"
+            android:layout_height="26dp"
+            android:src="@drawable/ic_upscale"
+            app:tint="@color/accent"
+            android:importantForAccessibility="no"/>
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="10dp"
+            android:orientation="vertical">
+            <TextView
+                android:id="@+id/upscale_toast_title"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="@font/heading"
+                android:textColor="@color/text_primary"
+                android:textSize="15sp"/>
+            <TextView
+                android:id="@+id/upscale_toast_detail"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="@color/text_secondary"
+                android:textSize="12sp"
+                android:fontFeatureSettings="tnum"
+                android:visibility="gone"/>
+        </LinearLayout>
     </LinearLayout>
 
     <ImageButton
