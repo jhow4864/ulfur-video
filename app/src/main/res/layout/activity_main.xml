@@ -242,6 +242,20 @@
                 android:focusable="true"
                 android:clickable="true"/>
 
+            <!-- 1.5.1: bulk delete (danger red) next to Move to Private -->
+            <ImageView
+                android:id="@+id/selection_delete"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:layout_marginStart="4dp"
+                android:padding="12dp"
+                android:background="@drawable/bg_danger_button"
+                android:contentDescription="@string/delete_selected_videos"
+                android:src="@drawable/ic_delete"
+                android:focusable="true"
+                android:clickable="true"
+                app:tint="@color/danger"/>
+
             <TextView
                 android:id="@+id/selection_move_private"
                 android:layout_width="0dp"

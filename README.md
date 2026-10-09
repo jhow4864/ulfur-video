@@ -117,3 +117,20 @@ Live GPU upscale + sharpen while playing (nothing is saved). Built on Media3 vid
 - **Before/after**: `design/upscale-before-after.png`, rendered by running these exact shaders through
   desktop Mesa GL (`tools/upscale-compare/render.py`, `compose.py`) on a 640×360 frame of
   Big Buck Bunny (© Blender Foundation, CC BY 3.0).
+
+## v1.5.1 (versionCode 10): bulk Delete in the library
+
+- History: 1.2.0/1.3.0 had no way to delete gallery videos at all. The library long-press popup offered only
+  "Move to Private"; the only delete was "Delete permanently" in the Private folder's long-press popup.
+  1.4.0 turned long-press into multi-select in both screens (bulk Move to Private / Move out / Delete
+  permanently in Private), so the Private popup's single delete became "select → delete".
+- New: in selection mode (Videos, inside folders, Clips; grid and list) a red trash icon in the selection
+  toolbar and a round red Delete button in the bottom bar next to "Move N to Private". Single delete =
+  long-press a video → Delete (no extra menu, so long-press-to-select is unchanged).
+- One confirmation per batch (`DeleteVideosFlow`): with media management allowed (1.4.1) or on Android ≤ 10,
+  our "Delete N videos?" dialog, then direct MediaStore deletes with no system prompt (leftovers via the
+  auto-approved createDeleteRequest). On Android 11+ without media management, Android's own
+  "Allow … to delete N videos?" is the single confirmation (one request for the whole batch).
+- Deleted videos disappear from the list immediately, selection mode ends, resume points / "Continue
+  watching" shortcuts are cleared, then MediaStore is re-queried. Cancelling keeps the selection.
+- Private folder bulk "Delete permanently" unchanged (now tinted danger red); covered by a test.

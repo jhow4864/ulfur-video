@@ -77,12 +77,15 @@ public class MainActivity extends AppCompatActivity implements LibraryAdapter.Li
     private View defaultBanner;
     private View selectionBar;
     private TextView selectionMoveButton, selectionSelectAll;
+    private View selectionDeleteButton;
     /** Set when we sent the user to Settings or the "Open with" dialog; re-checked in onResume. */
     private boolean pendingDefaultCheck;
     /** 1.4.1: last known media-management state, re-checked in onResume. */
     private Boolean lastCanManageMedia;
 
     private final MoveToPrivateFlow moveToPrivate = new MoveToPrivateFlow(this, this::refresh);
+    /** 1.5.1: bulk / single delete from selection mode (Videos, folders, Clips). */
+    private final DeleteVideosFlow deleteFlow = new DeleteVideosFlow(this, this::onVideosDeleted);
 
     private final ActivityResultLauncher<String[]> permissionLauncher =
             registerForActivityResult(new ActivityResultContracts.RequestMultiplePermissions(), r -> {
@@ -108,6 +111,8 @@ public class MainActivity extends AppCompatActivity implements LibraryAdapter.Li
         selectionMoveButton = findViewById(R.id.selection_move_private);
         selectionSelectAll = findViewById(R.id.selection_select_all);
         selectionMoveButton.setOnClickListener(v -> moveSelectedToPrivate());
+        selectionDeleteButton = findViewById(R.id.selection_delete);
+        selectionDeleteButton.setOnClickListener(v -> deleteSelected());
         selectionSelectAll.setOnClickListener(v -> toggleSelectAll());
         findViewById(R.id.banner_setup).setOnClickListener(v -> {
             Prefs.setDefaultBannerDismissed(this);
@@ -468,6 +473,9 @@ public class MainActivity extends AppCompatActivity implements LibraryAdapter.Li
         selectionMoveButton.setEnabled(count > 0);
         selectionMoveButton.setAlpha(count > 0 ? 1f : 0.45f);
         selectionMoveButton.setText(count > 1 ? "Move " + count + " to Private" : getString(R.string.move_selected_to_private));
+        selectionDeleteButton.setEnabled(count > 0);
+        selectionDeleteButton.setAlpha(count > 0 ? 1f : 0.45f);
+        selectionDeleteButton.setContentDescription(count == 1 ? "Delete 1 video" : "Delete " + count + " videos");
         boolean all = adapter != null && count > 0 && count >= adapter.visibleVideoCount();
         selectionSelectAll.setText(all ? R.string.clear_selection : R.string.select_all);
         updateRecyclerBottomPadding();
@@ -498,6 +506,28 @@ public class MainActivity extends AppCompatActivity implements LibraryAdapter.Li
             return;
         }
         moveToPrivate.start(vids, this::exitSelection);
+    }
+
+    /** 1.5.1: one confirmation for the whole selection, then delete (no system prompt with media management). */
+    void deleteSelected() {
+        deleteFlow.start(selectedVideos());
+    }
+
+    /** Removes deleted videos from the list right away, leaves selection mode, then re-queries MediaStore. */
+    void onVideosDeleted(List<VideoItem> deleted) {
+        if (deleted.isEmpty() || isDestroyed()) return;   // cancelled: keep the selection
+        removeDeleted(deleted);
+        refresh();
+    }
+
+    /** Drops {@code deleted} from the shown list immediately and exits selection mode. */
+    void removeDeleted(List<VideoItem> deleted) {
+        Set<Long> gone = new HashSet<>();
+        for (VideoItem v : deleted) gone.add(v.id);
+        List<VideoItem> left = new ArrayList<>();
+        for (VideoItem v : allVideos) if (!gone.contains(v.id)) left.add(v);
+        allVideos = left;
+        if (adapter.isSelectionMode()) exitSelection(); else render();
     }
 
     // ---------------------------------------------------------------- clicks
@@ -614,6 +644,9 @@ public class MainActivity extends AppCompatActivity implements LibraryAdapter.Li
             return true;
         } else if (id == R.id.action_move_selected_private) {
             moveSelectedToPrivate();
+            return true;
+        } else if (id == R.id.action_delete_selected) {
+            deleteSelected();
             return true;
         } else if (id == R.id.action_select) {
             enterSelection(null);

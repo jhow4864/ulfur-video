@@ -29,6 +29,10 @@
     <color name="private_bg">#FF1B1328</color>
     <color name="private_stroke">#FF3D2A5C</color>
     <color name="private_ink">#FFC9B8F0</color>
+    <!-- 1.5.1 destructive actions -->
+    <color name="danger">#FFFF453A</color>
+    <color name="danger_bg">#29FF453A</color>
+    <color name="danger_stroke">#80FF453A</color>
     <color name="warn">#FFFFB020</color>
     <color name="warn_bg">#33FFB020</color>
     <color name="scrim">#F20E0E12</color>

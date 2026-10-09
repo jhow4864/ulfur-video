@@ -216,7 +216,7 @@
                     android:background="?attr/selectableItemBackgroundBorderless"
                     android:contentDescription="@string/delete_selected"
                     android:src="@drawable/ic_delete"
-                    app:tint="@color/text_secondary"/>
+                    app:tint="@color/danger"/>
 
                 <TextView
                     android:id="@+id/vault_move_out_selected"

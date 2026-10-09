@@ -334,13 +334,14 @@ public class VaultActivity extends AppCompatActivity {
         }
     }
 
-    private void confirmDelete(List<Vault.Entry> list) {
+    /** Bulk "Delete permanently" (1.4.0). Package-private + returns the dialog for tests (1.5.1). */
+    androidx.appcompat.app.AlertDialog confirmDelete(List<Vault.Entry> list) {
         if (list.isEmpty()) {
             Toast.makeText(this, "Select some videos first", Toast.LENGTH_SHORT).show();
-            return;
+            return null;
         }
         String what = list.size() == 1 ? "\u201c" + list.get(0).name + "\u201d will" : list.size() + " videos will";
-        new MaterialAlertDialogBuilder(this)
+        androidx.appcompat.app.AlertDialog dlg = new MaterialAlertDialogBuilder(this)
                 .setTitle(list.size() == 1 ? "Delete permanently?" : "Delete " + list.size() + " videos permanently?")
                 .setMessage(what + " be deleted from this phone. This can't be undone.")
                 .setNegativeButton(android.R.string.cancel, null)
@@ -353,6 +354,7 @@ public class VaultActivity extends AppCompatActivity {
                     });
                 })
                 .show();
+        return dlg;
     }
 
     /** Moves one or many videos out to Movies/UlfurVideo, one after the other, with one progress dialog. */

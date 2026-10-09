@@ -30,6 +30,8 @@
     <string name="vault_lock_now">Lock now</string>
     <string name="move_to_private">Move to Private</string>
     <string name="move_out_of_private">Move out to Movies/UlfurVideo</string>
+    <string name="delete">Delete</string>
+    <string name="delete_selected_videos">Delete selected videos</string>
     <string name="delete_permanently">Delete permanently</string>
     <string name="auto_rotate_video">Auto-rotate to match video</string>
     <string name="select_all">Select all</string>
