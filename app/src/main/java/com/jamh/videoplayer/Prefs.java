@@ -51,6 +51,18 @@ public final class Prefs {
     public static boolean defaultBannerDismissed(Context c) { return s(c).getBoolean("default_banner_dismissed", false); }
     public static void setDefaultBannerDismissed(Context c) { s(c).edit().putBoolean("default_banner_dismissed", true).apply(); }
 
+    /** 1.7.0: master switch for the player's touch gestures (swipes, double-tap, pinch, hold for 2x). */
+    public static boolean gesturesEnabled(Context c) { return s(c).getBoolean("gestures", true); }
+    public static void setGesturesEnabled(Context c, boolean v) { s(c).edit().putBoolean("gestures", v).apply(); }
+    static final int[] SKIP_CHOICES = {5, 10, 15, 30};
+    /** 1.7.0: double-tap / skip-button step in seconds (5, 10, 15 or 30; default 10). */
+    public static int skipSeconds(Context c) { return sanitizeSkip(s(c).getInt("skip_seconds", 10)); }
+    public static void setSkipSeconds(Context c, int v) { s(c).edit().putInt("skip_seconds", sanitizeSkip(v)).apply(); }
+    static int sanitizeSkip(int v) {
+        for (int k : SKIP_CHOICES) if (k == v) return v;
+        return 10;
+    }
+
     /** Returns {positionMs, durationMs} or null. */
     public static long[] getResume(Context c, String key) {
         String v = r(c).getString(key, null);
@@ -69,7 +81,7 @@ public final class Prefs {
         if (posMs < 3000 || nearEnd) {
             r(c).edit().remove(key).apply();
         } else {
-            r(c).edit().putString(key, posMs + "," + Math.max(durMs, 0)).apply();
+            r(c).edit().putString(key, posMs + "," + Math.max(durMs, 0) + "," + System.currentTimeMillis()).apply(); // 1.7.0: + saved-at (Recently watched)
         }
     }
 

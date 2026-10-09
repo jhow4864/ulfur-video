@@ -40,6 +40,10 @@
         <item name="popupMenuStyle">@style/Widget.Ulfur.PopupMenu</item>
         <item name="android:popupMenuStyle">@style/Widget.Ulfur.PopupMenu</item>
         <item name="toolbarStyle">@style/Widget.Ulfur.Toolbar</item>
+        <!-- 1.7.0 Cast widgets in Ulfur colours -->
+        <item name="castMiniControllerStyle">@style/Ulfur.CastMiniController</item>
+        <item name="castExpandedControllerStyle">@style/Ulfur.CastExpandedController</item>
+        <item name="mediaRouteTheme">@style/Ulfur.MediaRouter</item>
     </style>
 
     <style name="ThemeOverlay.Ulfur.Dialog" parent="ThemeOverlay.Material3.MaterialAlertDialog">
@@ -153,5 +157,32 @@
         <item name="android:textSize">12sp</item>
         <item name="android:insetTop">0dp</item>
         <item name="android:insetBottom">0dp</item>
+    </style>
+    <style name="Ulfur.CastMiniController" parent="CastMiniController">
+        <item name="castBackground">@color/surface2</item>
+        <item name="castProgressBarColor">@color/accent</item>
+        <item name="castButtonColor">@color/text_primary</item>
+        <item name="castMiniControllerLoadingIndicatorColor">@color/accent</item>
+        <item name="castTitleTextAppearance">@style/TextAppearance.Ulfur.CastTitle</item>
+        <item name="castSubtitleTextAppearance">@style/TextAppearance.Ulfur.CastSubtitle</item>
+    </style>
+    <style name="TextAppearance.Ulfur.CastTitle" parent="TextAppearance.CastMiniController.Title">
+        <item name="android:textColor">@color/text_primary</item>
+        <item name="android:fontFamily">@font/inter_semibold</item>
+    </style>
+    <style name="TextAppearance.Ulfur.CastSubtitle" parent="TextAppearance.CastMiniController.Subtitle">
+        <item name="android:textColor">@color/text_secondary</item>
+    </style>
+    <style name="Ulfur.CastExpandedController" parent="CastExpandedController">
+        <item name="castButtonColor">#FFFFFFFF</item>
+        <item name="castSeekBarProgressAndThumbColor">@color/accent</item>
+        <item name="castExpandedControllerLoadingIndicatorColor">@color/accent</item>
+    </style>
+    <style name="Ulfur.MediaRouter" parent="Theme.MediaRouter">
+        <item name="colorPrimary">@color/accent</item>
+        <item name="android:windowBackground">@color/surface</item>
+    </style>
+    <style name="Theme.VideoPlayer.CastController" parent="Theme.VideoPlayer">
+        <item name="android:windowBackground">@android:color/black</item>
     </style>
 </resources>

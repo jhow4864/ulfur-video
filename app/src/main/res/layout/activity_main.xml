@@ -140,6 +140,95 @@
         </com.google.android.material.chip.ChipGroup>
     </HorizontalScrollView>
 
+    <!-- 1.7.0: sort / Largest first / filter chips -->
+    <HorizontalScrollView
+        android:id="@+id/library_bar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:scrollbars="none"
+        android:visibility="gone">
+
+        <com.google.android.material.chip.ChipGroup
+            android:id="@+id/library_chips"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:paddingTop="4dp"
+            app:chipSpacingHorizontal="8dp"
+            app:singleLine="true"/>
+    </HorizontalScrollView>
+
+    <!-- 1.7.0: Largest first storage view summary -->
+    <com.google.android.material.card.MaterialCardView
+        android:id="@+id/storage_card"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="12dp"
+        android:layout_marginEnd="12dp"
+        android:layout_marginTop="8dp"
+        android:visibility="gone"
+        app:cardBackgroundColor="@color/surface2"
+        app:cardCornerRadius="18dp"
+        app:strokeColor="@color/stroke"
+        app:strokeWidth="1dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:padding="14dp">
+
+            <ImageView
+                android:layout_width="28dp"
+                android:layout_height="28dp"
+                android:layout_marginEnd="14dp"
+                android:importantForAccessibility="no"
+                android:src="@drawable/ic_storage"
+                app:tint="@color/accent"/>
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/storage_total"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="@font/heading"
+                    android:letterSpacing="0.03"
+                    android:textColor="@color/text_primary"
+                    android:textSize="17sp"/>
+
+                <TextView
+                    android:id="@+id/storage_detail"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="13sp"/>
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/storage_selected"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:background="@drawable/bg_danger_button"
+                android:fontFamily="@font/inter_semibold"
+                android:paddingStart="10dp"
+                android:paddingEnd="10dp"
+                android:paddingTop="6dp"
+                android:paddingBottom="6dp"
+                android:textColor="@color/danger"
+                android:textSize="13sp"
+                android:visibility="gone"/>
+        </LinearLayout>
+    </com.google.android.material.card.MaterialCardView>
+
     <!-- Ulfur section label: accent bar + spaced caps (like SPEED DIAL in the browser) -->
     <LinearLayout
         android:layout_width="match_parent"
@@ -274,4 +363,10 @@
                 android:clickable="true"/>
         </LinearLayout>
     </FrameLayout>
+    <!-- 1.7.0: Cast mini controller (added at runtime when Google Cast is available) -->
+    <FrameLayout
+        android:id="@+id/cast_mini_controller"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:visibility="gone"/>
 </LinearLayout>

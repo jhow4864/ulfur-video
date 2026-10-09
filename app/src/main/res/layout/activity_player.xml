@@ -89,6 +89,13 @@
         android:textStyle="bold"
         android:visibility="gone"/>
 
+    <!-- 1.7.0 double-tap ripple (behind the +Ns counter) -->
+    <com.jamh.videoplayer.SkipRippleView
+        android:id="@+id/skip_ripple"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:visibility="gone"/>
+
     <!-- Double-tap skip feedback -->
     <TextView
         android:id="@+id/skip_left"
@@ -201,6 +208,14 @@
             <ImageButton android:id="@+id/btn_audio" style="@style/PlayerIconButton" android:src="@drawable/ic_audiotrack" android:contentDescription="Audio track"/>
             <ImageButton android:id="@+id/btn_subs" style="@style/PlayerIconButton" android:src="@drawable/ic_subtitles" android:contentDescription="Subtitles"/>
             <ImageButton android:id="@+id/btn_pip" style="@style/PlayerIconButton" android:src="@drawable/ic_pip" android:contentDescription="Picture-in-picture"/>
+            <androidx.mediarouter.app.MediaRouteButton
+                android:id="@+id/btn_cast"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:background="@drawable/bg_circle_button"
+                android:contentDescription="@string/cast_button"
+                android:visibility="gone"
+                app:mediaRouteButtonTint="#FFFFFFFF"/>
             <ImageButton android:id="@+id/btn_more" style="@style/PlayerIconButton" android:src="@drawable/ic_more" android:contentDescription="More"/>
         </LinearLayout>
 
@@ -384,6 +399,67 @@
                 android:visibility="gone"/>
         </LinearLayout>
     </LinearLayout>
+
+    <!-- 1.7.0: long-press 2x speed -->
+    <TextView
+        android:id="@+id/speed_hold"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_horizontal|top"
+        android:layout_marginTop="28dp"
+        android:background="@drawable/bg_round_dark"
+        android:drawableStart="@drawable/ic_speed_2x"
+        android:drawablePadding="8dp"
+        android:gravity="center_vertical"
+        android:paddingStart="16dp"
+        android:paddingEnd="18dp"
+        android:paddingTop="8dp"
+        android:paddingBottom="8dp"
+        android:text="@string/gesture_speed_hold"
+        android:textColor="#FFFFFFFF"
+        android:textSize="14sp"
+        android:textStyle="bold"
+        android:visibility="gone"/>
+
+    <!-- 1.7.0: shown after pinch-zoom / crop so it is one tap back to Fit -->
+    <TextView
+        android:id="@+id/zoom_reset"
+        android:layout_width="wrap_content"
+        android:layout_height="40dp"
+        android:layout_gravity="center_horizontal|top"
+        android:layout_marginTop="84dp"
+        android:background="@drawable/bg_round_dark"
+        android:drawableStart="@drawable/ic_aspect"
+        android:drawablePadding="8dp"
+        android:drawableTint="#FFFFFFFF"
+        android:gravity="center_vertical"
+        android:paddingStart="14dp"
+        android:paddingEnd="16dp"
+        android:text="@string/gesture_zoom_reset"
+        android:textColor="#FFFFFFFF"
+        android:textSize="14sp"
+        android:visibility="gone"/>
+
+    <!-- 1.7.0: casting status; tap opens the cast controls -->
+    <TextView
+        android:id="@+id/cast_banner"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_horizontal|top"
+        android:layout_marginTop="76dp"
+        android:background="@drawable/bg_round_dark"
+        android:drawableStart="@drawable/ic_cast_tv"
+        android:drawablePadding="10dp"
+        android:drawableTint="@color/accent"
+        android:gravity="center_vertical"
+        android:maxWidth="340dp"
+        android:paddingStart="16dp"
+        android:paddingEnd="18dp"
+        android:paddingTop="10dp"
+        android:paddingBottom="10dp"
+        android:textColor="#FFFFFFFF"
+        android:textSize="14sp"
+        android:visibility="gone"/>
 
     <ImageButton
         android:id="@+id/btn_unlock"

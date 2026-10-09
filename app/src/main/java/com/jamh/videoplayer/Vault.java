@@ -615,6 +615,7 @@ final class Vault {
         //noinspection ResultOfMethodCallIgnored
         encThumbOf(ctx, e).delete();
         PrivateResume.clear(ctx, e.file);
+        WatchHistory.clear(ctx, e.file, true);
         List<Entry> l = readIndex(ctx);
         for (int i = l.size() - 1; i >= 0; i--) if (l.get(i).id.equals(e.id)) l.remove(i);
         try {

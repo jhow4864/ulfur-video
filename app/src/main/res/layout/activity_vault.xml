@@ -237,6 +237,23 @@
                 android:paddingEnd="6dp"/>
         </LinearLayout>
 
+        <!-- 1.7.0: sort / Largest first / filter chips -->
+        <HorizontalScrollView
+            android:id="@+id/vault_library_bar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:scrollbars="none">
+
+            <com.google.android.material.chip.ChipGroup
+                android:id="@+id/vault_chips"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                app:chipSpacingHorizontal="8dp"
+                app:singleLine="true"/>
+        </HorizontalScrollView>
+
         <FrameLayout
             android:layout_width="match_parent"
             android:layout_height="0dp"
@@ -319,4 +336,10 @@
             </LinearLayout>
         </FrameLayout>
     </LinearLayout>
+    <!-- 1.7.0: Cast mini controller (added at runtime when Google Cast is available) -->
+    <FrameLayout
+        android:id="@+id/vault_cast_mini_controller"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:visibility="gone"/>
 </LinearLayout>

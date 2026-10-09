@@ -70,4 +70,35 @@
     <string name="media_manage_title">Stop the delete pop-up?</string>
     <string name="media_manage_body">When videos move to Private, Android asks \u201cAllow %1$s to delete these videos?\u201d every time.\n\nAllow media management so Android stops asking every time: tap Open settings, turn on \u201cAllow app to manage media\u201d, then come back.\n\nThis only lets %1$s edit and delete videos and pictures without asking. It doesn\'t give access to your other files.</string>
     <string name="media_manage_menu">Media management permission</string>
+
+    <!-- 1.7.0 Sort & filter -->
+    <string name="lib_sheet_title">Sort &amp; filter</string>
+    <string name="lib_reset">Reset</string>
+    <string name="lib_sort_by">Sort by</string>
+    <string name="lib_storage_title">Largest first</string>
+    <string name="lib_storage_body">Storage view: biggest videos on top with their total size, so you can select and delete to free space</string>
+    <string name="lib_group_length">Length</string>
+    <string name="lib_group_quality">Quality</string>
+    <string name="lib_group_orientation">Orientation</string>
+    <string name="lib_group_watched">Watched</string>
+    <string name="lib_filters">Filters</string>
+    <string name="lib_clear_filters">Clear filters</string>
+    <string name="lib_no_matches">No videos match these filters</string>
+    <string name="gestures_menu">Player gestures</string>
+    <!-- 1.7.0 Cast -->
+    <string name="cast_private_title">Cast this private video?</string>
+    <string name="cast_private_body">It\'ll be visible on the TV (%1$s) to anyone who can see the screen, and it shows up in the TV\'s now playing info as \u201cPrivate video\u201d.\n\nYour phone decrypts it on the fly and streams it over your Wi-Fi only while casting. Nothing is saved on the TV.</string>
+    <string name="cast_private_confirm">Cast to TV</string>
+    <string name="cast_no_wifi">Connect your phone to the same Wi-Fi as the TV to cast videos from this phone</string>
+    <string name="cast_playing_on">Playing on %1$s · tap for controls</string>
+    <string name="cast_back_on_phone">Back on your phone at %1$s</string>
+    <string name="cast_button">Cast to TV</string>
+    <string name="gesture_speed_hold">2× speed</string>
+    <string name="gesture_zoom_reset">Reset zoom</string>
+    <string name="gesture_crop_fill">Crop to fill</string>
+    <string name="gesture_menu_toggle">Gestures</string>
+    <string name="gesture_menu_toggle_hint">Swipe for brightness/volume/seek, double-tap to skip, pinch to zoom, hold for 2×</string>
+    <string name="gesture_menu_skip">Double-tap skip</string>
+    <string name="gesture_skip_value">%1$d seconds</string>
+    <string name="cast_connected_tap">Connected to %1$s · tap to play this video there</string>
 </resources>

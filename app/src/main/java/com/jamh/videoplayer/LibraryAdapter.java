@@ -101,6 +101,21 @@ public class LibraryAdapter extends RecyclerView.Adapter<LibraryAdapter.Holder> 
     private boolean grid = true;
     private boolean clipsMode;
 
+    /** 1.7.0 Largest first: total of the shown items (0 = off); each row shows its share. */
+    private long storageTotal;
+
+    public void setStorageTotal(long total) {
+        if (storageTotal == total) return;
+        storageTotal = total;
+        notifyDataSetChanged();
+    }
+
+    static String share(long part, long total) {
+        if (total <= 0 || part <= 0) return "";
+        double pct = 100.0 * part / total;
+        return pct < 1 ? "<1%" : Math.round(pct) + "%";
+    }
+
     public void setClipsMode(boolean clipsMode) {
         if (this.clipsMode == clipsMode) return;
         this.clipsMode = clipsMode;
@@ -163,7 +178,9 @@ public class LibraryAdapter extends RecyclerView.Adapter<LibraryAdapter.Holder> 
         } else if (o instanceof VideoItem) {
             VideoItem v = (VideoItem) o;
             h.title.setText(v.title);
-            String meta = grid ? Fmt.size(v.sizeBytes)
+            String meta = storageTotal > 0
+                    ? join(Fmt.size(v.sizeBytes), share(v.sizeBytes, storageTotal) + (grid ? "" : " of this view"))
+                    : grid ? Fmt.size(v.sizeBytes)
                     : join(Fmt.size(v.sizeBytes), Fmt.date(v.dateAddedSec),
                            v.height > 0 ? Math.min(v.width, v.height) + "p" : "");
             h.meta.setText(meta);
@@ -192,7 +209,9 @@ public class LibraryAdapter extends RecyclerView.Adapter<LibraryAdapter.Holder> 
             Folder f = (Folder) o;
             h.title.setText(f.name);
             int n = f.videos.size();
-            h.meta.setText(join(n + (n == 1 ? " video" : " videos"), Fmt.size(f.totalSize)));
+            h.meta.setText(storageTotal > 0
+                    ? join(Fmt.size(f.totalSize), share(f.totalSize, storageTotal), n + (n == 1 ? " video" : " videos"))
+                    : join(n + (n == 1 ? " video" : " videos"), Fmt.size(f.totalSize)));
             h.duration.setVisibility(View.GONE);
             h.resume.setVisibility(View.GONE);
             h.folderBadge.setVisibility(View.VISIBLE);

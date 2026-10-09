@@ -132,6 +132,7 @@ public class MainActivity extends AppCompatActivity implements LibraryAdapter.Li
             defaultBanner.setVisibility(View.GONE);
         });
         setSupportActionBar(toolbar);
+        CastSupport.addMiniController(this, R.id.cast_mini_controller);
 
         View root = findViewById(R.id.root);
         ViewCompat.setOnApplyWindowInsetsListener(root, (v, insets) -> {
@@ -225,14 +226,14 @@ public class MainActivity extends AppCompatActivity implements LibraryAdapter.Li
 
     /** Opens the swipe feed at the first clip matching the current Clips filter (if any). */
     private void openFirstClip() {
-        int filter = Prefs.clipsFilter(this);
-        List<VideoItem> clips = new ArrayList<>();
-        for (VideoItem v : allVideos) if (v.matchesClipFilter(filter)) clips.add(v);
+        String savedQuery = query;
+        query = "";
+        List<VideoItem> clips = shownClips();
+        query = savedQuery;
         if (clips.isEmpty()) {
             Toast.makeText(this, "No clips yet: portrait or short videos show up here", Toast.LENGTH_LONG).show();
             return;
         }
-        Sort.videos(clips, sort);
         onClipClick(clips.get(0));
     }
 
@@ -353,37 +354,43 @@ public class MainActivity extends AppCompatActivity implements LibraryAdapter.Li
         String sub;
         findViewById(R.id.clips_filter_bar).setVisibility(tab == TAB_CLIPS && !inFolder ? View.VISIBLE : View.GONE);
         adapter.setClipsMode(tab == TAB_CLIPS && !inFolder);
+        // 1.7.0: per-screen sort, filters and the Largest first storage view.
+        LibraryView view = currentView();
+        sort = view.toLegacy();
+        boolean foldersList = tab == TAB_FOLDERS && !inFolder;
+        LibraryBar.bind(findViewById(R.id.library_chips), view, foldersList, libraryBarCallbacks);
+        findViewById(R.id.library_bar).setVisibility(View.VISIBLE);
+        long shownBytes = 0;
+        int unfiltered;
         if (tab == TAB_CLIPS && !inFolder) {
-            int filter = Prefs.clipsFilter(this);
-            List<VideoItem> clips = new ArrayList<>();
-            for (VideoItem v : allVideos) {
-                if (!v.matchesClipFilter(filter)) continue;
-                if (!q.isEmpty() && !v.title.toLowerCase(Locale.ROOT).contains(q)) continue;
-                clips.add(v);
-            }
-            Sort.videos(clips, sort);
+            List<VideoItem> clips = shownClips();
+            unfiltered = candidateVideos().size();
             data.addAll(clips);
-            sub = clips.size() + (clips.size() == 1 ? " clip" : " clips") + "  ·  tap to open the swipe feed";
+            shownBytes = LibrarySort.totalSize(clips);
+            sub = countLabel(clips.size(), unfiltered, view, " clip", " clips") + "  ·  tap to open the swipe feed";
         } else if (tab == TAB_VIDEOS || inFolder) {
-            List<VideoItem> vids = new ArrayList<>();
-            for (VideoItem v : allVideos) {
-                if (inFolder && !v.bucketId.equals(openFolderId)) continue;
-                if (!q.isEmpty() && !v.title.toLowerCase(Locale.ROOT).contains(q)) continue;
-                vids.add(v);
-            }
-            Sort.videos(vids, sort);
+            List<VideoItem> vids = shownVideos();
+            unfiltered = candidateVideos().size();
             data.addAll(vids);
-            sub = vids.size() + (vids.size() == 1 ? " video" : " videos");
+            shownBytes = LibrarySort.totalSize(vids);
+            sub = countLabel(vids.size(), unfiltered, view, " video", " videos");
         } else {
             List<Folder> folders = VideoRepository.folders(allVideos);
             List<Folder> filtered = new ArrayList<>();
             for (Folder f : folders) {
-                if (q.isEmpty() || f.name.toLowerCase(Locale.ROOT).contains(q)) filtered.add(f);
+                if (q.isEmpty() || f.name.toLowerCase(Locale.ROOT).contains(q)) {
+                    filtered.add(f);
+                    shownBytes += f.totalSize;
+                }
             }
-            Sort.folders(filtered, sort);
+            filtered = LibrarySort.folders(filtered, view);
             data.addAll(filtered);
+            unfiltered = filtered.size();
             sub = filtered.size() + (filtered.size() == 1 ? " folder" : " folders");
         }
+        adapter.setStorageTotal(view.storage ? shownBytes : 0);
+        shownTotalBytes = shownBytes;
+        updateStorageCard(view, data.size(), foldersList);
         if (tab != TAB_FOLDERS || inFolder) {
             if (!data.isEmpty() && !adapter.isSelectionMode()) sub += "  ·  " + getString(R.string.library_hint);
         }
@@ -396,11 +403,121 @@ public class MainActivity extends AppCompatActivity implements LibraryAdapter.Li
         subtitle.setText(sub);
         adapter.submit(data);
         if (data.isEmpty()) {
-            showEmpty(q.isEmpty() ? getString(R.string.no_videos) : "No results for \"" + query + "\"", false);
+            showEmpty(!q.isEmpty() ? "No results for \"" + query + "\""
+                    : view.filterCount() > 0 && unfiltered > 0 && !foldersList ? getString(R.string.lib_no_matches)
+                    : getString(R.string.no_videos), false);
         } else {
             emptyPanel.setVisibility(View.GONE);
             recycler.setVisibility(View.VISIBLE);
         }
+    }
+
+    // ---------------------------------------------------------------- 1.7.0 sort & filter
+
+    private long shownTotalBytes;
+
+    /** The remembered view of the screen on show: Videos, a folder's contents, Clips or the Folders list. */
+    String screenKey() {
+        if (openFolderId != null) return LibraryView.FOLDER;
+        if (tab == TAB_CLIPS) return LibraryView.CLIPS;
+        if (tab == TAB_FOLDERS) return LibraryView.FOLDERS;
+        return LibraryView.VIDEOS;
+    }
+
+    LibraryView currentView() {
+        return LibraryView.load(this, screenKey());
+    }
+
+    void setView(LibraryView v) {
+        LibraryView.save(this, screenKey(), v);
+        render();
+    }
+
+    private final LibraryBar.Callbacks libraryBarCallbacks = new LibraryBar.Callbacks() {
+        @Override public void openSheet() {
+            openSortSheet();
+        }
+
+        @Override public void onViewChanged(LibraryView v) {
+            setView(v);
+            recycler.scrollToPosition(0);
+        }
+    };
+
+    com.google.android.material.bottomsheet.BottomSheetDialog openSortSheet() {
+        boolean folders = tab == TAB_FOLDERS && openFolderId == null;
+        return LibrarySheet.show(this, currentView(), folders, new LibrarySheet.Host() {
+            @Override public void onViewChanged(LibraryView v) {
+                setView(v);
+                recycler.scrollToPosition(0);
+            }
+
+            @Override public String summary(LibraryView v) {
+                if (folders) {
+                    int n = VideoRepository.folders(allVideos).size();
+                    return n + (n == 1 ? " folder" : " folders");
+                }
+                int all = candidateVideos().size();
+                int shown = LibrarySort.apply(candidateVideos(), v, LibrarySort.videos(WatchHistory.gallery(MainActivity.this))).size();
+                String noun = tab == TAB_CLIPS && openFolderId == null ? " clips" : " videos";
+                return shown == all ? all + noun : shown + " of " + all + noun;
+            }
+        });
+    }
+
+    /** Videos of this screen before the sort / filter chips (search and folder / clip type applied). */
+    private List<VideoItem> candidateVideos() {
+        String q = query.trim().toLowerCase(Locale.ROOT);
+        boolean clips = tab == TAB_CLIPS && openFolderId == null;
+        int clipFilter = Prefs.clipsFilter(this);
+        List<VideoItem> out = new ArrayList<>();
+        for (VideoItem v : allVideos) {
+            if (openFolderId != null && !v.bucketId.equals(openFolderId)) continue;
+            if (clips && !v.matchesClipFilter(clipFilter)) continue;
+            if (!q.isEmpty() && !v.title.toLowerCase(Locale.ROOT).contains(q)) continue;
+            out.add(v);
+        }
+        return out;
+    }
+
+    /** Videos (or folder contents) as shown: filtered and sorted. */
+    List<VideoItem> shownVideos() {
+        return LibrarySort.apply(candidateVideos(), currentView(), LibrarySort.videos(WatchHistory.gallery(this)));
+    }
+
+    /** Clips as shown (the swipe feed plays them in this order). */
+    private List<VideoItem> shownClips() {
+        return LibrarySort.apply(candidateVideos(), LibraryView.load(this, LibraryView.CLIPS),
+                LibrarySort.videos(WatchHistory.gallery(this)));
+    }
+
+    private static String countLabel(int shown, int all, LibraryView v, String one, String many) {
+        if (v.filterCount() > 0 && shown != all) return shown + " of " + all + (all == 1 ? one : many);
+        return shown + (shown == 1 ? one : many);
+    }
+
+    private void updateStorageCard(LibraryView v, int count, boolean folders) {
+        View card = findViewById(R.id.storage_card);
+        card.setVisibility(v.storage && count > 0 ? View.VISIBLE : View.GONE);
+        if (!v.storage) return;
+        ((TextView) findViewById(R.id.storage_total)).setText(
+                (shownTotalBytes > 0 ? Fmt.size(shownTotalBytes) : "0 MB") + " in this view");
+        String noun = folders ? (count == 1 ? " folder" : " folders") : (count == 1 ? " video" : " videos");
+        ((TextView) findViewById(R.id.storage_detail)).setText(count + noun + ", largest first"
+                + (folders ? "" : (adapter.isSelectionMode() ? "" : "  ·  long-press to select")));
+        updateStorageSelection();
+    }
+
+    private void updateStorageSelection() {
+        TextView sel = findViewById(R.id.storage_selected);
+        int n = adapter == null ? 0 : adapter.selectedCount();
+        boolean show = adapter != null && adapter.isSelectionMode() && n > 0;
+        sel.setVisibility(show ? View.VISIBLE : View.GONE);
+        if (show) sel.setText(Fmt.size(selectedBytes()) + " selected");
+    }
+
+    long selectedBytes() {
+        return LibrarySort.totalSize(selectedVideos());
     }
 
     private void showEmpty(String text, boolean showButton) {
@@ -449,11 +566,15 @@ public class MainActivity extends AppCompatActivity implements LibraryAdapter.Li
             toolbar.setNavigationIcon(R.drawable.ic_close);
             toolbar.setNavigationContentDescription(R.string.clear_selection);
             toolbar.setTitle(getString(R.string.selection_count, adapter.selectedCount()));
+            // 1.7.0: total size of the selection (what deleting would free).
+            long bytes = adapter.selectedCount() > 0 ? selectedBytes() : 0;
+            toolbar.setSubtitle(bytes > 0 ? Fmt.size(bytes) : null);
         } else {
             toolbar.setLogo(inFolder ? null : ContextCompat.getDrawable(this, R.drawable.ic_app_mark));
             toolbar.setNavigationIcon(inFolder ? ContextCompat.getDrawable(this, R.drawable.ic_arrow_back) : null);
             toolbar.setNavigationContentDescription(null);
             toolbar.setTitle(inFolder ? openFolderName : getString(R.string.app_name));
+            toolbar.setSubtitle(null);
         }
         if (toolbar.getNavigationIcon() != null) toolbar.getNavigationIcon().setTint(0xFFF2F2F7);
     }
@@ -488,6 +609,7 @@ public class MainActivity extends AppCompatActivity implements LibraryAdapter.Li
         selectionSelectAll.setText(all ? R.string.clear_selection : R.string.select_all);
         updateRecyclerBottomPadding();
         updateToolbar();
+        updateStorageSelection();
         invalidateOptionsMenu();
     }
 
@@ -542,11 +664,17 @@ public class MainActivity extends AppCompatActivity implements LibraryAdapter.Li
 
     @Override
     public void onVideoClick(VideoItem item) {
+        // 1.7.0: while a Cast session is connected, tapping a video plays it on the TV.
+        if (Caster.get().isConnected(this)) {
+            Caster.get().castGalleryVideo(this, item);
+            return;
+        }
         Intent i = new Intent(this, PlayerActivity.class);
         i.setData(item.uri);
         i.putExtra(PlayerActivity.EXTRA_VIDEO_ID, item.id);
         i.putExtra(PlayerActivity.EXTRA_BUCKET_ID, item.bucketId);
         i.putExtra(PlayerActivity.EXTRA_SORT, sort);
+        i.putExtra(PlayerActivity.EXTRA_SORT_SPEC, currentView().encode());
         startActivity(i);
     }
 
@@ -561,13 +689,8 @@ public class MainActivity extends AppCompatActivity implements LibraryAdapter.Li
 
     @Override
     public void onClipClick(VideoItem clip) {
-        List<VideoItem> clips = new ArrayList<>();
-        int filter = Prefs.clipsFilter(this);
-        String q = query.trim().toLowerCase(Locale.ROOT);
-        for (VideoItem v : allVideos) {
-            if (v.matchesClipFilter(filter) && (q.isEmpty() || v.title.toLowerCase(Locale.ROOT).contains(q))) clips.add(v);
-        }
-        Sort.videos(clips, sort);
+        List<VideoItem> clips = shownClips();
+        if (clips.isEmpty()) clips.add(clip);
         int start = 0;
         for (int i = 0; i < clips.size(); i++) if (clips.get(i).id == clip.id) start = i;
         ClipsFeedActivity.pendingClips = clips;
@@ -598,6 +721,7 @@ public class MainActivity extends AppCompatActivity implements LibraryAdapter.Li
             return true;
         }
         getMenuInflater().inflate(R.menu.main, menu);
+        CastSupport.setUpMenuButton(this, menu, R.id.media_route_menu_item);
         searchItem = menu.findItem(R.id.action_search);
         SearchView sv = (SearchView) searchItem.getActionView();
         if (sv != null) {
@@ -636,8 +760,8 @@ public class MainActivity extends AppCompatActivity implements LibraryAdapter.Li
         if (select != null) select.setVisible(tab != TAB_FOLDERS || openFolderId != null);
         viewMode.setIcon(grid ? R.drawable.ic_list : R.drawable.ic_grid);
         viewMode.setTitle(grid ? "List view" : "Grid view");
-        int[] ids = {R.id.sort_date, R.id.sort_name, R.id.sort_size, R.id.sort_duration};
-        menu.findItem(ids[Math.max(0, Math.min(3, sort))]).setChecked(true);
+        MenuItem gestures = menu.findItem(R.id.action_gestures);
+        if (gestures != null) gestures.setChecked(Prefs.gesturesEnabled(this));
     }
 
     @Override
@@ -688,12 +812,15 @@ public class MainActivity extends AppCompatActivity implements LibraryAdapter.Li
             applyLayoutManager();
             invalidateOptionsMenu();
             return true;
-        } else if (id == R.id.sort_date || id == R.id.sort_name || id == R.id.sort_size || id == R.id.sort_duration) {
-            sort = id == R.id.sort_name ? Sort.NAME : id == R.id.sort_size ? Sort.SIZE
-                    : id == R.id.sort_duration ? Sort.DURATION : Sort.DATE;
-            Prefs.setSort(this, sort);
-            item.setChecked(true);
-            render();
+        } else if (id == R.id.action_sort) {
+            openSortSheet();
+            return true;
+        } else if (id == R.id.action_gestures) {
+            boolean on = !Prefs.gesturesEnabled(this);
+            Prefs.setGesturesEnabled(this, on);
+            item.setChecked(on);
+            Toast.makeText(this, on ? "Player gestures on" : "Player gestures off: tap to show controls only",
+                    Toast.LENGTH_SHORT).show();
             return true;
         } else if (id == R.id.action_private) {
             startActivity(new Intent(this, VaultActivity.class));

@@ -137,7 +137,7 @@ public final class PlayerFactory {
                 .setMediaCodecSelector(codecSelector(preferSoftwareVideo));
 
         DefaultHttpDataSource.Factory http = new DefaultHttpDataSource.Factory()
-                .setUserAgent("UlfurVideo/1.6.0 (Android) Media3")
+                .setUserAgent("UlfurVideo/1.7.0 (Android) Media3")
                 .setAllowCrossProtocolRedirects(true)
                 .setConnectTimeoutMs(15_000)
                 .setReadTimeoutMs(20_000);
@@ -159,8 +159,10 @@ public final class PlayerFactory {
                 .setMediaSourceFactory(mediaSourceFactory)
                 .setAudioAttributes(audioAttributes, /* handleAudioFocus= */ true)
                 .setHandleAudioBecomingNoisy(true)
-                .setSeekBackIncrementMs(10_000)
-                .setSeekForwardIncrementMs(10_000)
+                // 1.7.0: the double-tap / button skip amount (5/10/15/30 s) also drives the
+                // notification and headset seek buttons.
+                .setSeekBackIncrementMs(Prefs.skipSeconds(context) * 1000L)
+                .setSeekForwardIncrementMs(Prefs.skipSeconds(context) * 1000L)
                 .build();
         player.setSeekParameters(SeekParameters.EXACT);
         // Scrubbing mode: keep audio selected (only metadata disabled) so that the buffered audio

@@ -10,6 +10,7 @@ public class TestVideoPlayerApp extends VideoPlayerApp {
     public void onCreate() {
         VaultCrypto.testOverride = VaultCrypto.newInMemory();
         VaultMigration.autoStart = false;
+        CastSupport.disabled = true; // no Play services in Robolectric; Cast tests use Caster.testRemote
         super.onCreate();
     }
 }

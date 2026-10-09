@@ -27,6 +27,8 @@ import android.util.Rational;
 import android.view.GestureDetector;
 import android.view.MotionEvent;
 import android.view.ScaleGestureDetector;
+import android.view.HapticFeedbackConstants;
+import android.view.ViewConfiguration;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
@@ -42,8 +44,10 @@ import androidx.activity.OnBackPressedCallback;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.annotation.OptIn;
 import androidx.annotation.RequiresApi;
+import androidx.annotation.VisibleForTesting;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.ContextCompat;
 import androidx.core.graphics.Insets;
@@ -77,6 +81,7 @@ import androidx.media3.ui.DefaultTrackNameProvider;
 import androidx.media3.ui.PlayerView;
 import androidx.media3.session.CommandButton;
 import androidx.media3.session.MediaSession;
+import androidx.mediarouter.app.MediaRouteButton;
 import com.google.common.collect.ImmutableList;
 
 import com.google.android.material.bottomsheet.BottomSheetBehavior;
@@ -99,8 +104,9 @@ public class PlayerActivity extends AppCompatActivity {
     public static final String EXTRA_VIDEO_ID = "video_id";
     public static final String EXTRA_BUCKET_ID = "bucket_id";
     public static final String EXTRA_SORT = "sort";
+    /** 1.7.0: {@link LibraryView#encode()} of the screen the video was opened from (playlist order). */
+    public static final String EXTRA_SORT_SPEC = "sort_spec";
 
-    private static final long SKIP_MS = 10_000;
     /** Keyframe-snapping window for double-tap skips (fast, but never moves the wrong way). */
     private static final long SKIP_SNAP_TOLERANCE_US = 4_000_000;
     /** 1.4.2: how long the thumbnail sweep stays paused after a seek so the seek isn't competing for the decoder. */
@@ -200,6 +206,21 @@ public class PlayerActivity extends AppCompatActivity {
     private int skipAccumDir;
     private long skipAccumMs;
     private long lastSkipTapAt;
+    // 1.7.0 gestures
+    private boolean gesturesEnabled = true;
+    /** Long-press: 2x while the finger is down. */
+    private boolean holdingFast;
+    /** The current touch started in a system-gesture edge or on the visible control bars. */
+    private boolean gestureFromEdge;
+    private float tapDownX, tapDownY;
+    private long tapDownAt;
+    private SkipRippleView skipRipple;
+    private TextView speedHold;
+    private TextView zoomReset;
+    // 1.7.0 Cast
+    private MediaRouteButton btnCast;
+    private TextView castBanner;
+    private final Runnable hideZoomReset = () -> { if (zoomReset != null) zoomReset.setVisibility(View.GONE); };
 
     // Scrubbing state
     private boolean scrubbing;
@@ -281,6 +302,7 @@ public class PlayerActivity extends AppCompatActivity {
     private final Runnable hideSkipFeedback = () -> {
         skipLeft.setVisibility(View.GONE);
         skipRight.setVisibility(View.GONE);
+        if (skipRipple != null) skipRipple.fadeOut();
         skipAccumMs = 0;
         skipAccumDir = 0;
     };
@@ -343,8 +365,10 @@ public class PlayerActivity extends AppCompatActivity {
         }
         bookmarkStore = new BookmarkStore(this);
 
+        gesturesEnabled = Prefs.gesturesEnabled(this);
         setupControls();
         setupGestures();
+        setupCast();
         registerPipReceiver();
         vaultPrompt = VaultAuth.create(this, new VaultAuth.Callback() {
             @Override public void onUnlocked() {
@@ -377,6 +401,7 @@ public class PlayerActivity extends AppCompatActivity {
             toHandle = new Intent(Intent.ACTION_VIEW).setDataAndType(cur, savedInstanceState.getString("cur_mime"));
             if (vid >= 0) toHandle.putExtra(EXTRA_VIDEO_ID, vid);
             toHandle.putExtra(EXTRA_SORT, getIntent().getIntExtra(EXTRA_SORT, Sort.NAME));
+            toHandle.putExtra(EXTRA_SORT_SPEC, getIntent().getStringExtra(EXTRA_SORT_SPEC));
             speed = savedInstanceState.getFloat("speed", 1f);
             keepSpeedOnce = true;
             aspectMode = savedInstanceState.getInt("aspect", 0);
@@ -401,6 +426,9 @@ public class PlayerActivity extends AppCompatActivity {
     @Override
     protected void onStart() {
         super.onStart();
+        gesturesEnabled = Prefs.gesturesEnabled(this);
+        updateSkipLabels();
+        updateCastBanner();
         handler.post(progressRunnable);
         handler.removeCallbacks(upscaleWatchdogTick);
         watchdogLastDropped = -1;
@@ -448,6 +476,7 @@ public class PlayerActivity extends AppCompatActivity {
     @Override
     protected void onPause() {
         super.onPause();
+        endHoldSpeed();
         if (scrubbing || gestureMode != GESTURE_NONE) {
             endGesture();
             endScrub(); // no-op if already ended; seek-bar scrubs have gestureMode == NONE
@@ -503,6 +532,7 @@ public class PlayerActivity extends AppCompatActivity {
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        Caster.get().removeListener(casterListener);
         handler.removeCallbacksAndMessages(null);
         saveResume();
         if (pipReceiver != null) {
@@ -540,6 +570,11 @@ public class PlayerActivity extends AppCompatActivity {
         seekInfo = findViewById(R.id.seek_info);
         skipLeft = findViewById(R.id.skip_left);
         skipRight = findViewById(R.id.skip_right);
+        skipRipple = findViewById(R.id.skip_ripple);
+        speedHold = findViewById(R.id.speed_hold);
+        zoomReset = findViewById(R.id.zoom_reset);
+        btnCast = findViewById(R.id.btn_cast);
+        castBanner = findViewById(R.id.cast_banner);
         titleView = findViewById(R.id.title);
         positionView = findViewById(R.id.position);
         durationView = findViewById(R.id.duration);
@@ -612,6 +647,7 @@ public class PlayerActivity extends AppCompatActivity {
         if (player != null) player.pause();  // old video stops while the new one resolves
         final long id = intent.getLongExtra(EXTRA_VIDEO_ID, -1);
         final int sort = intent.getIntExtra(EXTRA_SORT, Sort.NAME);
+        final String sortSpec = intent.getStringExtra(EXTRA_SORT_SPEC);
         final int token = ++intentToken;
         final Uri first = uris.get(0);
         setPrivateMode(Vault.isVaultUri(first));
@@ -721,14 +757,21 @@ public class PlayerActivity extends AppCompatActivity {
             } else if (item.id >= 0) {
                 // A single MediaStore video: its folder becomes the playlist.
                 List<VideoItem> list = VideoRepository.inBucket(app, item.bucketId);
-                Sort.videos(list, sort);
+                if (sortSpec != null) {
+                    // Same order as the library screen it was opened from (filters aside).
+                    list = LibrarySort.order(list, LibraryView.decode(sortSpec, LibraryView.defaults()),
+                            LibrarySort.videos(WatchHistory.gallery(app)));
+                } else {
+                    Sort.videos(list, sort);
+                }
+                final List<VideoItem> ordered = list;
                 final long vid = item.id;
                 handler.post(() -> {
                     if (token != intentToken || isDestroyed() || playlistVideoId != vid) return;
                     playlist.clear();
-                    playlist.addAll(list);
+                    playlist.addAll(ordered);
                     playlistIndex = -1;
-                    for (int i = 0; i < list.size(); i++) if (list.get(i).id == vid) playlistIndex = i;
+                    for (int i = 0; i < ordered.size(); i++) if (ordered.get(i).id == vid) playlistIndex = i;
                     updateNavButtons();
                 });
             }
@@ -839,6 +882,8 @@ public class PlayerActivity extends AppCompatActivity {
         if (resume != null && resume[0] > 3000 && (resume[1] <= 0 || resume[0] < resume[1] - 5000)) {
             start = resume[0];
         }
+        // 1.7.0: "Recently watched" sorting and the Unwatched / In progress filters.
+        WatchHistory.mark(this, currentPrivate ? uri.getLastPathSegment() : key, currentPrivate);
         player.setWakeMode(local ? C.WAKE_MODE_LOCAL : C.WAKE_MODE_NETWORK);
         player.setMediaItem(buildMediaItem(), start);
         player.prepare();
@@ -852,6 +897,7 @@ public class PlayerActivity extends AppCompatActivity {
         }
         updateNavButtons();
         showControls();
+        updateCastBanner();
         if (currentPrivate) return; // private videos never become a launcher shortcut
         final Uri u = uri;
         final long vid = playlistVideoId;
@@ -1205,8 +1251,9 @@ public class PlayerActivity extends AppCompatActivity {
     private void setupControls() {
         findViewById(R.id.btn_back).setOnClickListener(v -> finish());
         btnPlay.setOnClickListener(v -> { togglePlay(); scheduleHide(); });
-        findViewById(R.id.btn_rew).setOnClickListener(v -> { skipBy(-SKIP_MS); scheduleHide(); });
-        findViewById(R.id.btn_ffwd).setOnClickListener(v -> { skipBy(SKIP_MS); scheduleHide(); });
+        findViewById(R.id.btn_rew).setOnClickListener(v -> { skipBy(-skipMs()); scheduleHide(); });
+        findViewById(R.id.btn_ffwd).setOnClickListener(v -> { skipBy(skipMs()); scheduleHide(); });
+        zoomReset.setOnClickListener(v -> resetZoom());
         btnPrev.setOnClickListener(v -> {
             if (player != null && player.getCurrentPosition() > 5000) fastSeekExact(0);
             else playIndex(playlistIndex - 1);
@@ -1331,6 +1378,7 @@ public class PlayerActivity extends AppCompatActivity {
             return;
         }
         controlsVisible = visible;
+        updateZoomReset(false);
         controls.animate().cancel();
         if (visible) {
             controls.setVisibility(View.VISIBLE);
@@ -1437,6 +1485,7 @@ public class PlayerActivity extends AppCompatActivity {
         setZoom(z);
         aspectLabel.setText(ASPECT_NAMES[aspectMode]);
         if (announce) showGesturePanel(R.drawable.ic_aspect, ASPECT_NAMES[aspectMode], -1);
+        updateZoomReset(false);
     }
 
     private void setZoom(float z) {
@@ -1457,16 +1506,17 @@ public class PlayerActivity extends AppCompatActivity {
             public boolean onDown(@NonNull MotionEvent e) {
                 gestureStartX = e.getX();
                 gestureStartY = e.getY();
+                gestureFromEdge = startsInDeadZone(e.getX(), e.getY());
                 return true;
             }
 
             @Override
             public boolean onSingleTapUp(@NonNull MotionEvent e) {
                 // Taps following a double-tap keep skipping (Samsung/YouTube style +10 s, +20 s ...).
-                if (!locked && SystemClock.uptimeMillis() - lastSkipTapAt < 700) {
+                if (!locked && !gestureFromEdge && SystemClock.uptimeMillis() - lastSkipTapAt < 700) {
                     int side = sideOf(e.getX());
                     if (side != 0 && side == skipAccumDir) {
-                        doubleTapSkip(side);
+                        doubleTapSkip(side, e.getX(), e.getY());
                         return true;
                     }
                 }
@@ -1486,16 +1536,23 @@ public class PlayerActivity extends AppCompatActivity {
 
             @Override
             public boolean onDoubleTap(@NonNull MotionEvent e) {
-                if (locked || player == null) return true;
+                if (locked || player == null || gestureFromEdge) return true;
                 int side = sideOf(e.getX());
                 if (side == 0) {
                     togglePlay();
                     showGesturePanel(player.getPlayWhenReady() ? R.drawable.ic_play : R.drawable.ic_pause,
                             player.getPlayWhenReady() ? "Play" : "Pause", -1);
                 } else {
-                    doubleTapSkip(side);
+                    doubleTapSkip(side, e.getX(), e.getY());
                 }
                 return true;
+            }
+
+            @Override
+            public void onLongPress(@NonNull MotionEvent e) {
+                if (locked || player == null || gestureFromEdge || gestureMode != GESTURE_NONE || scrubbing) return;
+                if (SystemClock.uptimeMillis() - lastSkipTapAt < 700) return; // still double-tap skipping
+                startHoldSpeed();
             }
 
             @Override
@@ -1503,8 +1560,10 @@ public class PlayerActivity extends AppCompatActivity {
                 if (locked || player == null || e1 == null || gestureMode == GESTURE_ZOOM) return false;
                 int w = gestureLayer.getWidth(), h = gestureLayer.getHeight();
                 if (gestureMode == GESTURE_NONE) {
-                    // Ignore swipes starting in the system gesture zones at the top/bottom edges.
-                    if (gestureStartY < h * 0.06f || gestureStartY > h * 0.94f) return false;
+                    // 1.7.0: ignore swipes starting in the system gesture zones (back swipe at the
+                    // sides, notification shade / home bar at the top and bottom) or on the
+                    // visible top/bottom control bars.
+                    if (gestureFromEdge || holdingFast) return false;
                     float totalX = e2.getX() - gestureStartX, totalY = e2.getY() - gestureStartY;
                     if (Math.abs(totalX) > Math.abs(totalY)) {
                         if (!player.isCurrentMediaItemSeekable() || player.getDuration() == C.TIME_UNSET) return false;
@@ -1572,8 +1631,9 @@ public class PlayerActivity extends AppCompatActivity {
                 new ScaleGestureDetector.SimpleOnScaleGestureListener() {
                     @Override
                     public boolean onScaleBegin(@NonNull ScaleGestureDetector d) {
-                        if (locked) return false;
+                        if (locked || !gesturesEnabled) return false;
                         if (gestureMode == GESTURE_SCRUB) endScrub();
+                        endHoldSpeed();
                         gestureMode = GESTURE_ZOOM;
                         return true;
                     }
@@ -1581,13 +1641,35 @@ public class PlayerActivity extends AppCompatActivity {
                     @Override
                     public boolean onScale(@NonNull ScaleGestureDetector d) {
                         setZoom(zoom * d.getScaleFactor());
-                        showGesturePanel(R.drawable.ic_zoom, Math.round(zoom * 100) + "%", -1);
+                        boolean wouldFill = pinchSnap(aspectMode, zoom, fillZoom()) == SNAP_CROP;
+                        showGesturePanel(R.drawable.ic_zoom, wouldFill ? getString(R.string.gesture_crop_fill)
+                                : Math.round(zoom * 100) + "%", -1);
                         return true;
                     }
 
                     @Override
                     public void onScaleEnd(@NonNull ScaleGestureDetector d) {
-                        if (Math.abs(zoom - 1f) < 0.06f) setZoom(1f);
+                        switch (pinchSnap(aspectMode, zoom, fillZoom())) {
+                            case SNAP_CROP:
+                                aspectMode = 1; // crop to fill: exact, and it survives rotation
+                                applyAspect(false);
+                                showGesturePanel(R.drawable.ic_aspect, getString(R.string.gesture_crop_fill), -1);
+                                break;
+                            case SNAP_FIT:
+                                aspectMode = 0;
+                                applyAspect(true);
+                                break;
+                            case SNAP_ONE:
+                                setZoom(1f);
+                                if (aspectMode == 3) {
+                                    aspectMode = 0;
+                                    aspectLabel.setText(ASPECT_NAMES[aspectMode]);
+                                }
+                                break;
+                            default:
+                                break;
+                        }
+                        updateZoomReset(true);
                     }
                 });
 
@@ -1598,16 +1680,169 @@ public class PlayerActivity extends AppCompatActivity {
                 if (act == MotionEvent.ACTION_UP || act == MotionEvent.ACTION_CANCEL) endGesture();
                 return false;
             }
+            if (!gesturesEnabled) {
+                // 1.7.0: gestures off -> a tap only shows/hides the controls.
+                handleTapOnly(e);
+                return true;
+            }
             scaleDetector.onTouchEvent(e);
             if (!scaleDetector.isInProgress() && gestureMode != GESTURE_ZOOM) {
                 detector.onTouchEvent(e);
             }
             int action = e.getActionMasked();
             if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+                endHoldSpeed();
                 endGesture();
             }
             return true;
         });
+    }
+
+    private void handleTapOnly(MotionEvent e) {
+        int act = e.getActionMasked();
+        if (act == MotionEvent.ACTION_DOWN) {
+            tapDownX = e.getX();
+            tapDownY = e.getY();
+            tapDownAt = SystemClock.uptimeMillis();
+        } else if (act == MotionEvent.ACTION_UP) {
+            int slop = ViewConfiguration.get(this).getScaledTouchSlop();
+            if (Math.abs(e.getX() - tapDownX) < slop && Math.abs(e.getY() - tapDownY) < slop
+                    && SystemClock.uptimeMillis() - tapDownAt < 500) {
+                if (locked) flashUnlockButton();
+                else setControlsVisible(!controlsVisible);
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------ 1.7.0 gesture helpers
+
+    private long skipMs() {
+        return Prefs.skipSeconds(this) * 1000L;
+    }
+
+    private void updateSkipLabels() {
+        int s = Prefs.skipSeconds(this);
+        findViewById(R.id.btn_rew).setContentDescription("Back " + s + " seconds");
+        findViewById(R.id.btn_ffwd).setContentDescription("Forward " + s + " seconds");
+    }
+
+    static int skipBackIcon(int seconds) {
+        switch (seconds) {
+            case 5: return CommandButton.ICON_SKIP_BACK_5;
+            case 15: return CommandButton.ICON_SKIP_BACK_15;
+            case 30: return CommandButton.ICON_SKIP_BACK_30;
+            case 10: return CommandButton.ICON_SKIP_BACK_10;
+            default: return CommandButton.ICON_SKIP_BACK;
+        }
+    }
+
+    static int skipForwardIcon(int seconds) {
+        switch (seconds) {
+            case 5: return CommandButton.ICON_SKIP_FORWARD_5;
+            case 15: return CommandButton.ICON_SKIP_FORWARD_15;
+            case 30: return CommandButton.ICON_SKIP_FORWARD_30;
+            case 10: return CommandButton.ICON_SKIP_FORWARD_10;
+            default: return CommandButton.ICON_SKIP_FORWARD;
+        }
+    }
+
+    /**
+     * True when a touch at (x, y) starts where the system owns the gesture (back swipe at the
+     * sides, shade / home bar at the top and bottom). {@code left..bottom} are the system
+     * gesture insets; the sides keep at least {@code minSidePx}, top/bottom at least 6%.
+     */
+    @VisibleForTesting
+    static boolean inEdgeZone(float x, float y, int w, int h, int left, int top, int right, int bottom,
+            float minSidePx) {
+        float l = Math.max(left, minSidePx), r = Math.max(right, minSidePx);
+        float t = Math.max(top, h * 0.06f), b = Math.max(bottom, h * 0.06f);
+        return x < l || x > w - r || y < t || y > h - b;
+    }
+
+    private boolean startsInDeadZone(float x, float y) {
+        int w = gestureLayer.getWidth(), h = gestureLayer.getHeight();
+        Insets g = Insets.NONE;
+        WindowInsetsCompat wi = ViewCompat.getRootWindowInsets(gestureLayer);
+        if (wi != null) g = wi.getInsets(WindowInsetsCompat.Type.systemGestures());
+        float d = getResources().getDisplayMetrics().density;
+        if (inEdgeZone(x, y, w, h, g.left, g.top, g.right, g.bottom, 8 * d)) return true;
+        if (!controlsVisible || controls.getVisibility() != View.VISIBLE) return false;
+        View top = findViewById(R.id.top_bar), bottom = findViewById(R.id.bottom_bar);
+        return (top != null && y < top.getBottom()) || (bottom != null && y > bottom.getTop());
+    }
+
+    static final int SNAP_NONE = 0, SNAP_ONE = 1, SNAP_CROP = 2, SNAP_FIT = 3;
+
+    /**
+     * Where a pinch settles: near the fill scale it becomes "Crop to fill", near 100% it snaps to
+     * 100%, and pinching in from Crop goes back to Fit.
+     */
+    @VisibleForTesting
+    static int pinchSnap(int aspectMode, float zoom, float fill) {
+        if (aspectMode == 1) {
+            if (zoom < 0.92f) return SNAP_FIT;
+            return Math.abs(zoom - 1f) < 0.08f ? SNAP_ONE : SNAP_NONE;
+        }
+        if (aspectMode != 2 && fill > 1.02f && Math.abs(zoom - fill) / fill < 0.08f) return SNAP_CROP;
+        return Math.abs(zoom - 1f) < 0.06f ? SNAP_ONE : SNAP_NONE;
+    }
+
+    /** Scale (on top of Fit) at which the picture fills the screen. */
+    @VisibleForTesting
+    static float fillZoomFor(float videoW, float videoH, int viewW, int viewH) {
+        if (videoW <= 0 || videoH <= 0 || viewW <= 0 || viewH <= 0) return 1f;
+        float fit = Math.min(viewW / videoW, viewH / videoH);
+        float fill = Math.max(viewW / videoW, viewH / videoH);
+        return fill / fit;
+    }
+
+    private float fillZoom() {
+        if (player == null) return 1f;
+        VideoSize vs = player.getVideoSize();
+        float par = vs.pixelWidthHeightRatio > 0 ? vs.pixelWidthHeightRatio : 1f;
+        return fillZoomFor(vs.width * par, vs.height, playerView.getWidth(), playerView.getHeight());
+    }
+
+    private boolean zoomIsDefault() {
+        return aspectMode == 0 && Math.abs(zoom - 1f) < 0.001f;
+    }
+
+    /** "Reset zoom" pill: with the controls, or briefly after a pinch. */
+    private void updateZoomReset(boolean flash) {
+        if (zoomReset == null) return;
+        handler.removeCallbacks(hideZoomReset);
+        boolean show = !zoomIsDefault() && !isInPip() && !locked && (flash || controlsVisible);
+        zoomReset.setVisibility(show ? View.VISIBLE : View.GONE);
+        if (show && !controlsVisible) handler.postDelayed(hideZoomReset, 3000);
+    }
+
+    private void resetZoom() {
+        aspectMode = 0;
+        applyAspect(true);
+        updateZoomReset(false);
+    }
+
+    /** Long-press: 2x while held (the chosen speed comes back on release). */
+    private void startHoldSpeed() {
+        if (player == null || !player.getPlayWhenReady() || player.isCurrentMediaItemLive() || isInPip()) return;
+        if (speed >= 2f) return;
+        holdingFast = true;
+        player.setPlaybackSpeed(2f);
+        speedHold.setVisibility(View.VISIBLE);
+        gestureLayer.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
+        if (controlsVisible) setControlsVisible(false);
+    }
+
+    private void endHoldSpeed() {
+        if (!holdingFast) return;
+        holdingFast = false;
+        if (player != null) player.setPlaybackSpeed(speed);
+        if (speedHold != null) speedHold.setVisibility(View.GONE);
+    }
+
+    @VisibleForTesting
+    boolean isHoldingFast() {
+        return holdingFast;
     }
 
     /** -1 = left (rewind), 0 = middle, 1 = right (forward). */
@@ -1618,13 +1853,15 @@ public class PlayerActivity extends AppCompatActivity {
         return 0;
     }
 
-    private void doubleTapSkip(int side) {
+    private void doubleTapSkip(int side, float x, float y) {
         if (player == null || !player.isCurrentMediaItemSeekable()) return;
         lastSkipTapAt = SystemClock.uptimeMillis();
         if (skipAccumDir != side) skipAccumMs = 0;
         skipAccumDir = side;
-        skipAccumMs += SKIP_MS;
-        skipBy(side * SKIP_MS);
+        long step = skipMs();
+        skipAccumMs += step;
+        skipBy(side * step);
+        if (skipRipple != null) skipRipple.ripple(side, x, y);
         TextView view = side < 0 ? skipLeft : skipRight;
         (side < 0 ? skipRight : skipLeft).setVisibility(View.GONE);
         view.setText((side < 0 ? "-" : "+") + (skipAccumMs / 1000) + "s");
@@ -1674,6 +1911,88 @@ public class PlayerActivity extends AppCompatActivity {
         seekInfo.setText(text);
         seekInfo.setVisibility(View.VISIBLE);
         handler.removeCallbacks(hideSeekInfo);
+    }
+
+    // =================================================================== 1.7.0 Cast to TV
+
+    private final Caster.Listener casterListener = new Caster.Listener() {
+        @Override public void onSessionStarted() {
+            // Just connected to a TV from this screen: send the current video there.
+            if (isFinishing() || isDestroyed() || currentUri == null || player == null) return;
+            if (!getLifecycle().getCurrentState().isAtLeast(Lifecycle.State.STARTED)) return;
+            castCurrent();
+        }
+
+        @Override public void onCastHandedBack(String key, boolean isPrivate, long positionMs) {
+            if (isDestroyed() || key == null || !key.equals(castKey()) || isPrivate != currentPrivate) {
+                updateCastBanner();
+                return;
+            }
+            if (player != null) fastSeekExact(positionMs);
+            else stoppedPositionMs = positionMs;
+            updateCastBanner();
+            Snackbar.make(root, getString(R.string.cast_back_on_phone, Fmt.time(positionMs)), Snackbar.LENGTH_LONG).show();
+        }
+
+        @Override public void onCastingChanged() {
+            if (!isDestroyed()) updateCastBanner();
+        }
+    };
+
+    private void setupCast() {
+        CastSupport.setUpButton(this, btnCast);
+        Caster.get().addListener(casterListener);
+    }
+
+    /** Resume key of what is open (Private: the vault file name). */
+    @Nullable
+    private String castKey() {
+        if (currentUri == null) return null;
+        return currentPrivate ? currentUri.getLastPathSegment() : currentKey;
+    }
+
+    /** Sends the open video to the connected TV at the current position (Private asks first). */
+    void castCurrent() {
+        if (currentUri == null || player == null) return;
+        Caster.Request r = new Caster.Request();
+        r.uri = currentUri;
+        r.title = currentTitle == null ? "Video" : currentTitle;
+        r.mime = currentMime;
+        r.positionMs = Math.max(0, player.getCurrentPosition());
+        long d = player.getDuration();
+        r.durationMs = d == C.TIME_UNSET ? 0 : d;
+        r.key = castKey();
+        r.isPrivate = currentPrivate;
+        r.subtitleUri = externalSubUri;
+        r.subtitleName = externalSubName;
+        if (!currentPrivate && playlistIndex >= 0 && playlistIndex < playlist.size()) {
+            r.posterItem = playlist.get(playlistIndex);
+        }
+        Caster.get().cast(this, r, () -> {
+            if (player != null) player.pause();
+            saveResume();
+            updateCastBanner();
+        });
+    }
+
+    /** "Playing on Living room TV" (tap: TV controls) or "Connected to ..." (tap: play there). */
+    private void updateCastBanner() {
+        if (castBanner == null) return;
+        Caster c = Caster.get();
+        Caster.Remote rm = currentUri == null || isInPip() ? null : c.remote(this);
+        if (rm == null || !rm.isConnected()) {
+            castBanner.setVisibility(View.GONE);
+            return;
+        }
+        String tv = rm.deviceName();
+        if (tv == null || tv.isEmpty()) tv = "TV";
+        boolean here = c.isCasting(castKey());
+        castBanner.setText(getString(here ? R.string.cast_playing_on : R.string.cast_connected_tap, tv));
+        castBanner.setOnClickListener(v -> {
+            if (Caster.get().isCasting(castKey())) startActivity(new Intent(this, CastControllerActivity.class));
+            else castCurrent();
+        });
+        castBanner.setVisibility(View.VISIBLE);
     }
 
     // =================================================================== private videos
@@ -2206,6 +2525,44 @@ public class PlayerActivity extends AppCompatActivity {
                 ? "Mark moments in this video and jump back to them"
                 : marks + (marks == 1 ? " bookmark" : " bookmarks") + " in this video");
         v.findViewById(R.id.row_bookmarks).setOnClickListener(x -> { sheet.dismiss(); showBookmarksSheet(); });
+        MaterialSwitch swGestures = v.findViewById(R.id.switch_gestures);
+        swGestures.setChecked(gesturesEnabled);
+        swGestures.setOnCheckedChangeListener((b, on) -> setGesturesEnabled(on));
+        v.findViewById(R.id.row_gestures).setOnClickListener(x -> swGestures.toggle());
+        ((TextView) v.findViewById(R.id.skip_value)).setText(
+                getString(R.string.gesture_skip_value, Prefs.skipSeconds(this)));
+        v.findViewById(R.id.row_skip).setOnClickListener(x -> { sheet.dismiss(); showSkipDialog(); });
+    }
+
+    private void setGesturesEnabled(boolean on) {
+        gesturesEnabled = on;
+        Prefs.setGesturesEnabled(this, on);
+        if (!on) {
+            endHoldSpeed();
+            endGesture();
+        }
+    }
+
+    @VisibleForTesting
+    androidx.appcompat.app.AlertDialog showSkipDialog() {
+        int[] choices = Prefs.SKIP_CHOICES;
+        String[] labels = new String[choices.length];
+        int checked = 0;
+        int cur = Prefs.skipSeconds(this);
+        for (int i = 0; i < choices.length; i++) {
+            labels[i] = getString(R.string.gesture_skip_value, choices[i]);
+            if (choices[i] == cur) checked = i;
+        }
+        return new MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.gesture_menu_skip)
+                .setSingleChoiceItems(labels, checked, (d, which) -> {
+                    Prefs.setSkipSeconds(this, choices[which]);
+                    updateSkipLabels();
+                    updatePipParams();
+                    d.dismiss();
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
     }
 
     private void setAutoRotateToVideo(boolean on) {
@@ -2268,12 +2625,14 @@ public class PlayerActivity extends AppCompatActivity {
         Intent open = new Intent(this, PlayerActivity.class).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
         PendingIntent pi = PendingIntent.getActivity(this, 0, open,
                 PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+        // The notification buttons use the player's seek increment (fixed when the player is built).
+        int sessionSkipSeconds = (int) (player.getSeekBackIncrement() / 1000);
         ImmutableList<CommandButton> buttons = ImmutableList.of(
-                new CommandButton.Builder(CommandButton.ICON_SKIP_BACK_10)
-                        .setPlayerCommand(Player.COMMAND_SEEK_BACK).setDisplayName("Back 10 s")
+                new CommandButton.Builder(skipBackIcon(sessionSkipSeconds))
+                        .setPlayerCommand(Player.COMMAND_SEEK_BACK).setDisplayName("Back " + sessionSkipSeconds + " s")
                         .setSlots(CommandButton.SLOT_BACK).build(),
-                new CommandButton.Builder(CommandButton.ICON_SKIP_FORWARD_10)
-                        .setPlayerCommand(Player.COMMAND_SEEK_FORWARD).setDisplayName("Forward 10 s")
+                new CommandButton.Builder(skipForwardIcon(sessionSkipSeconds))
+                        .setPlayerCommand(Player.COMMAND_SEEK_FORWARD).setDisplayName("Forward " + sessionSkipSeconds + " s")
                         .setSlots(CommandButton.SLOT_FORWARD).build(),
                 new CommandButton.Builder(CommandButton.ICON_PREVIOUS)
                         .setPlayerCommand(Player.COMMAND_SEEK_TO_PREVIOUS).setDisplayName("Previous")
@@ -2732,11 +3091,11 @@ public class PlayerActivity extends AppCompatActivity {
             }
         }
         List<RemoteAction> actions = new ArrayList<>();
-        actions.add(pipAction(R.drawable.ic_fast_rewind, "Back 10 s", PIP_REWIND));
+        actions.add(pipAction(R.drawable.ic_fast_rewind, "Back " + Prefs.skipSeconds(this) + " s", PIP_REWIND));
         boolean playing = player != null && player.getPlayWhenReady();
         actions.add(pipAction(playing ? R.drawable.ic_pause : R.drawable.ic_play,
                 playing ? "Pause" : "Play", PIP_PLAY_PAUSE));
-        actions.add(pipAction(R.drawable.ic_fast_forward, "Forward 10 s", PIP_FORWARD));
+        actions.add(pipAction(R.drawable.ic_fast_forward, "Forward " + Prefs.skipSeconds(this) + " s", PIP_FORWARD));
         b.setActions(actions);
         Rect hint = new Rect();
         if (playerView.getGlobalVisibleRect(hint)) b.setSourceRectHint(hint);
@@ -2774,8 +3133,8 @@ public class PlayerActivity extends AppCompatActivity {
                 if (player == null) return;
                 switch (intent.getIntExtra(EXTRA_PIP, 0)) {
                     case PIP_PLAY_PAUSE: togglePlay(); break;
-                    case PIP_REWIND: skipBy(-SKIP_MS); break;
-                    case PIP_FORWARD: skipBy(SKIP_MS); break;
+                    case PIP_REWIND: skipBy(-skipMs()); break;
+                    case PIP_FORWARD: skipBy(skipMs()); break;
                     default: break;
                 }
                 updatePipParams();

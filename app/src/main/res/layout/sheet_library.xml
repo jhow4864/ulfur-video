@@ -1,0 +1,130 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 1.7.0: Sort & filter sheet (Videos, folder contents, Clips, Folders list, Vault) -->
+<androidx.core.widget.NestedScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingBottom="20dp">
+
+        <com.google.android.material.bottomsheet.BottomSheetDragHandleView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"/>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="20dp"
+            android:paddingEnd="8dp">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="@font/heading"
+                    android:letterSpacing="0.04"
+                    android:text="@string/lib_sheet_title"
+                    android:textColor="@color/text_primary"
+                    android:textSize="20sp"/>
+
+                <TextView
+                    android:id="@+id/lib_count"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="13sp"/>
+            </LinearLayout>
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/lib_reset"
+                style="@style/Widget.Material3.Button.TextButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/lib_reset"/>
+        </LinearLayout>
+
+        <TextView
+            style="@style/LibSheetLabel"
+            android:text="@string/lib_sort_by"/>
+
+        <com.google.android.material.chip.ChipGroup
+            android:id="@+id/lib_sort"
+            style="@style/LibSheetChips"
+            app:singleSelection="true"
+            app:selectionRequired="true"/>
+
+        <com.google.android.material.button.MaterialButtonToggleGroup
+            android:id="@+id/lib_dir"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="20dp"
+            android:layout_marginEnd="20dp"
+            android:layout_marginTop="10dp"
+            app:singleSelection="true"
+            app:selectionRequired="true">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/lib_dir_desc"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"/>
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/lib_dir_asc"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"/>
+        </com.google.android.material.button.MaterialButtonToggleGroup>
+
+        <LinearLayout
+            android:id="@+id/lib_row_storage"
+            style="@style/MenuRow"
+            android:layout_marginTop="10dp">
+            <ImageView style="@style/MenuRowIcon" android:src="@drawable/ic_storage"/>
+            <LinearLayout style="@style/MenuRowTexts">
+                <TextView style="@style/MenuRowTitle" android:text="@string/lib_storage_title"/>
+                <TextView
+                    android:id="@+id/lib_storage_subtitle"
+                    style="@style/MenuRowSubtitle"
+                    android:text="@string/lib_storage_body"/>
+            </LinearLayout>
+            <com.google.android.material.materialswitch.MaterialSwitch
+                android:id="@+id/lib_storage"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"/>
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/lib_filters"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <TextView style="@style/LibSheetLabel" android:text="@string/lib_group_length"/>
+            <com.google.android.material.chip.ChipGroup android:id="@+id/lib_f_duration" style="@style/LibSheetChips"/>
+
+            <TextView style="@style/LibSheetLabel" android:text="@string/lib_group_quality"/>
+            <com.google.android.material.chip.ChipGroup android:id="@+id/lib_f_res" style="@style/LibSheetChips"/>
+
+            <TextView style="@style/LibSheetLabel" android:text="@string/lib_group_orientation"/>
+            <com.google.android.material.chip.ChipGroup android:id="@+id/lib_f_orient" style="@style/LibSheetChips"/>
+
+            <TextView style="@style/LibSheetLabel" android:text="@string/lib_group_watched"/>
+            <com.google.android.material.chip.ChipGroup android:id="@+id/lib_f_watch" style="@style/LibSheetChips"/>
+        </LinearLayout>
+    </LinearLayout>
+</androidx.core.widget.NestedScrollView>

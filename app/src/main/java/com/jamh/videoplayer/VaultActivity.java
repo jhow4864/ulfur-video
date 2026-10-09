@@ -52,7 +52,11 @@ public class VaultActivity extends AppCompatActivity implements VaultMigration.L
 
     private final ExecutorService io = Executors.newSingleThreadExecutor();
     private final Handler handler = new Handler(Looper.getMainLooper());
+    /** Shown (filtered + sorted) entries. */
     private final List<Vault.Entry> entries = new ArrayList<>();
+    /** 1.7.0: every non-trashed entry, before the sort / filter chips. */
+    private final List<Vault.Entry> allEntries = new ArrayList<>();
+    private com.google.android.material.chip.ChipGroup chips;
     private final LruCache<String, Bitmap> thumbs = new LruCache<String, Bitmap>(6 * 1024 * 1024) {
         @Override protected int sizeOf(String k, Bitmap b) {
             return b.getByteCount();
@@ -101,6 +105,8 @@ public class VaultActivity extends AppCompatActivity implements VaultMigration.L
             if (selecting) setSelecting(false); else finish();
         });
         tb.inflateMenu(R.menu.vault);
+        CastSupport.setUpMenuButton(this, tb.getMenu(), R.id.vault_media_route);
+        CastSupport.addMiniController(this, R.id.vault_cast_mini_controller);
         tb.setOnMenuItemClickListener(item -> {
             int id = item.getItemId();
             if (id == R.id.action_lock_now) {
@@ -119,14 +125,17 @@ public class VaultActivity extends AppCompatActivity implements VaultMigration.L
             } else if (id == R.id.action_vault_trash) {
                 startActivity(TrashActivity.intent(this, true));
                 return true;
+            } else if (id == R.id.action_vault_sort) {
+                openSortSheet();
+                return true;
             } else if (id == R.id.action_vault_backup) {
-                backupFlow.startBackup(new ArrayList<>(entries));
+                backupFlow.startBackup(new ArrayList<>(allEntries));
                 return true;
             } else if (id == R.id.action_vault_restore) {
                 backupFlow.startRestore();
                 return true;
             } else if (id == R.id.action_vault_export_plain) {
-                backupFlow.startPlainExport(new ArrayList<>(entries));
+                backupFlow.startPlainExport(new ArrayList<>(allEntries));
                 return true;
             }
             return false;
@@ -151,6 +160,7 @@ public class VaultActivity extends AppCompatActivity implements VaultMigration.L
         storageBar = findViewById(R.id.vault_storage_bar);
         unlockButton = findViewById(R.id.vault_unlock);
         list = findViewById(R.id.vault_list);
+        chips = findViewById(R.id.vault_chips);
         continueSection = findViewById(R.id.vault_continue_section);
         continueList = findViewById(R.id.vault_continue);
         continueList.setLayoutManager(new androidx.recyclerview.widget.LinearLayoutManager(this,
@@ -261,6 +271,7 @@ public class VaultActivity extends AppCompatActivity implements VaultMigration.L
         if (selecting) setSelecting(false);
         content.setVisibility(View.GONE);
         entries.clear();
+        allEntries.clear();
         adapter.notifyDataSetChanged();
         continueEntries.clear();
         if (continueAdapter != null) continueAdapter.notifyDataSetChanged();
@@ -325,15 +336,14 @@ public class VaultActivity extends AppCompatActivity implements VaultMigration.L
 
     @VisibleForTesting
     void bind(List<Vault.Entry> l, long used, long free) {
-        entries.clear();
-        entries.addAll(l);
+        allEntries.clear();
+        allEntries.addAll(l);
+        applyView();
         Set<String> present = new java.util.HashSet<>();
         for (Vault.Entry e : l) present.add(e.id);
         selected.retainAll(present);
         if (selecting && l.isEmpty()) setSelecting(false);
-        adapter.notifyDataSetChanged();
         updateSelectionUi();
-        emptyView.setVisibility(l.isEmpty() ? View.VISIBLE : View.GONE);
         storageText.setText(storageLabel(l.size(), used, free));
         continueEntries.clear();
         continueEntries.addAll(PrivateResume.continueWatching(this, l, 10));
@@ -343,12 +353,95 @@ public class VaultActivity extends AppCompatActivity implements VaultMigration.L
         storageBar.setProgress(total <= 0 ? 0 : (int) Math.max(used > 0 ? 8 : 0, 1000 * used / total));
     }
 
+    // ------------------------------------------------------------------ 1.7.0 sort & filter
+
+    LibraryView currentView() {
+        return LibraryView.load(this, LibraryView.VAULT);
+    }
+
+    void setView(LibraryView v) {
+        LibraryView.save(this, LibraryView.VAULT, v);
+        applyView();
+        updateSelectionUi();
+        list.scrollToPosition(0);
+    }
+
+    private List<Vault.Entry> filtered(LibraryView v) {
+        return LibrarySort.apply(allEntries, v, LibrarySort.vault(WatchHistory.vault(this)));
+    }
+
+    /** Re-filters / re-sorts the shown entries from {@link #allEntries}. */
+    private void applyView() {
+        LibraryView v = currentView();
+        entries.clear();
+        entries.addAll(filtered(v));
+        adapter.notifyDataSetChanged();
+        findViewById(R.id.vault_library_bar).setVisibility(allEntries.isEmpty() ? View.GONE : View.VISIBLE);
+        LibraryBar.bind(chips, v, false, new LibraryBar.Callbacks() {
+            @Override public void openSheet() {
+                openSortSheet();
+            }
+
+            @Override public void onViewChanged(LibraryView nv) {
+                setView(nv);
+            }
+        });
+        emptyView.setVisibility(entries.isEmpty() ? View.VISIBLE : View.GONE);
+        ((TextView) emptyView).setText(allEntries.isEmpty() ? getString(R.string.vault_empty)
+                : getString(R.string.lib_no_matches));
+        updateHint();
+    }
+
+    com.google.android.material.bottomsheet.BottomSheetDialog openSortSheet() {
+        return LibrarySheet.show(this, currentView(), false, new LibrarySheet.Host() {
+            @Override public void onViewChanged(LibraryView v) {
+                setView(v);
+            }
+
+            @Override public String summary(LibraryView v) {
+                int all = allEntries.size(), shown = filtered(v).size();
+                return shown == all ? all + " videos" : shown + " of " + all + " videos";
+            }
+        });
+    }
+
+    @VisibleForTesting
+    List<Vault.Entry> shownEntries() {
+        return entries;
+    }
+
+    private long bytesOf(List<Vault.Entry> l) {
+        long t = 0;
+        for (Vault.Entry e : l) t += Math.max(0, e.size);
+        return t;
+    }
+
+    /** Storage view: total of what's shown and of the selection, in place of the usual hint. */
+    private void updateHint() {
+        TextView hint = findViewById(R.id.vault_hint);
+        if (hint == null) return;
+        LibraryView v = currentView();
+        if (!v.storage) {
+            hint.setText(R.string.vault_hint);
+            return;
+        }
+        String text = "Largest first · " + Fmt.size(bytesOf(entries)) + " in " + entries.size()
+                + (entries.size() == 1 ? " video" : " videos");
+        if (selecting && !selected.isEmpty()) text += " · " + Fmt.size(bytesOf(selectedEntries())) + " selected";
+        hint.setText(text);
+    }
+
     static String storageLabel(int count, long used, long free) {
         return count + (count == 1 ? " video" : " videos") + " · " + (used > 0 ? Fmt.size(used) : "0 MB") + " used · "
                 + Fmt.size(free) + " free on this phone";
     }
 
     private void play(Vault.Entry e) {
+        // 1.7.0: connected to a TV: cast it (after the "visible on the TV" warning).
+        if (Caster.get().isConnected(this)) {
+            Caster.get().castPrivateVideo(this, e);
+            return;
+        }
         Uri uri = Vault.uriFor(this, e);
         Intent i = new Intent(Intent.ACTION_VIEW).setDataAndType(uri, e.mime).setClass(this, PlayerActivity.class);
         startActivity(i);
@@ -363,6 +456,7 @@ public class VaultActivity extends AppCompatActivity implements VaultMigration.L
         if (!on) selected.clear();
         toolbar.getMenu().clear();
         toolbar.inflateMenu(on ? R.menu.vault_selection : R.menu.vault);
+        if (!on) CastSupport.setUpMenuButton(this, toolbar.getMenu(), R.id.vault_media_route);
         toolbar.setNavigationIcon(on ? R.drawable.ic_close : R.drawable.ic_arrow_back);
         if (toolbar.getNavigationIcon() != null) toolbar.getNavigationIcon().setTint(0xFFF2F2F7);
         adapter.notifyDataSetChanged();
@@ -402,6 +496,9 @@ public class VaultActivity extends AppCompatActivity implements VaultMigration.L
         if (toolbar == null) return;
         int n = selected.size();
         toolbar.setTitle(selecting ? getString(R.string.selection_count, n) : getString(R.string.vault_title));
+        long bytes = selecting && n > 0 ? bytesOf(selectedEntries()) : 0;
+        toolbar.setSubtitle(bytes > 0 ? Fmt.size(bytes) : null);
+        updateHint();
         selectionBar.setVisibility(selecting ? View.VISIBLE : View.GONE);
         moveOutButton.setEnabled(n > 0);
         moveOutButton.setAlpha(n > 0 ? 1f : 0.45f);
@@ -450,6 +547,7 @@ public class VaultActivity extends AppCompatActivity implements VaultMigration.L
         left.removeAll(batch);
         entries.clear();
         entries.addAll(left);
+        allEntries.removeAll(batch);
         adapter.notifyDataSetChanged();
         emptyView.setVisibility(entries.isEmpty() ? View.VISIBLE : View.GONE);
         io.execute(() -> {
