@@ -105,6 +105,7 @@ final class VaultMigration {
         Context app = ctx.getApplicationContext();
         worker = new Thread(() -> {
             try {
+                Vault.purgeExpired(app, System.currentTimeMillis()); // private trash: 30 days
                 run(app);
             } catch (RuntimeException ignored) {
                 // never crash the app over this; whatever is left is retried next launch

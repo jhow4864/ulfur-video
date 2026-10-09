@@ -36,6 +36,15 @@ import java.util.concurrent.Executors;
 /**
  * 1.5.1: delete one or many gallery videos (Videos, folders, Clips) from selection mode.
  *
+ * <p>1.6.0, Android 11+: "Delete" moves the videos to the system Trash (MediaStore
+ * {@code createTrashRequest}, kept 30 days, then purged by Android) and shows
+ * "Deleted N · Undo". No confirmation of our own (it's undoable); with media management the
+ * request is auto-approved, otherwise Android's "Move to trash?" prompt is the one confirmation.
+ * Restore / delete forever / empty trash live in {@link TrashActivity}. Android 10 and older
+ * have no Trash: the 1.5.1 behaviour below (one confirmation, permanent delete) stays, and the
+ * dialog says so.
+ *
+ * <p>1.5.1 permanent-delete path (Android 10 and older, and "Delete forever" in the Trash):
  * <p>Exactly one confirmation per batch:
  * <ul>
  *   <li>Media management allowed (Android 12+, 1.4.1's MANAGE_MEDIA) or Android 10 and older: our own
@@ -50,8 +59,33 @@ import java.util.concurrent.Executors;
 final class DeleteVideosFlow {
 
     interface Callback {
-        /** @param deleted videos removed from the phone (empty if the user cancelled / nothing was deleted). */
+        /** @param deleted videos removed from the library (empty if the user cancelled / nothing was deleted). */
         void onDeleteFinished(List<VideoItem> deleted);
+
+        /** 1.6.0: videos brought back by Undo. */
+        default void onRestored(List<VideoItem> restored) {
+        }
+    }
+
+    static final int REQ_TRASH = 1, REQ_UNTRASH = 2, REQ_DELETE = 3;
+
+    /** Creates the MediaStore request PendingIntents (replaceable in tests: Robolectric has no MediaProvider). */
+    @VisibleForTesting
+    interface RequestMaker {
+        PendingIntent make(android.content.ContentResolver cr, List<Uri> uris, int kind);
+    }
+
+    @VisibleForTesting
+    static RequestMaker requestMaker = (cr, uris, kind) -> {
+        if (Build.VERSION.SDK_INT < 30) throw new IllegalStateException("Android 11+ only");
+        if (kind == REQ_TRASH) return MediaStore.createTrashRequest(cr, uris, true);
+        if (kind == REQ_UNTRASH) return MediaStore.createTrashRequest(cr, uris, false);
+        return MediaStore.createDeleteRequest(cr, uris);
+    };
+
+    /** Android 11+ has a system Trash. */
+    static boolean usesTrash() {
+        return Build.VERSION.SDK_INT >= 30;
     }
 
     private final AppCompatActivity activity;
@@ -62,6 +96,8 @@ final class DeleteVideosFlow {
     private final ActivityResultLauncher<String> writePermission;
 
     private boolean busy;
+    private int requestKind = REQ_DELETE;
+    @Nullable private com.google.android.material.snackbar.Snackbar undoBar;
     private final List<VideoItem> pending = new ArrayList<>();   // waiting for the system request
     private final List<VideoItem> deleted = new ArrayList<>();
     private int api29Index;
@@ -101,12 +137,74 @@ final class DeleteVideosFlow {
             return;
         }
         if (busy) return;
-        if (systemWillAsk(activity)) proceed(vids);   // Android's dialog is the one confirmation
-        else showConfirm(vids);
+        if (usesTrash()) trash(vids);                  // undoable: no dialog of ours
+        else showConfirm(vids);                        // Android 10 and older: permanent, confirm once
+    }
+
+    // ------------------------------------------------------------------ trash (Android 11+)
+
+    /** One trash request for the whole batch; auto-approved with media management. */
+    void trash(List<VideoItem> vids) {
+        busy = true;
+        pending.clear();
+        deleted.clear();
+        failedCount = 0;
+        pending.addAll(vids);
+        launch(vids, REQ_TRASH);
+    }
+
+    /** Undo: one restore request for the batch. */
+    void untrash(List<VideoItem> vids) {
+        if (busy || vids.isEmpty()) return;
+        busy = true;
+        pending.clear();
+        pending.addAll(vids);
+        launch(vids, REQ_UNTRASH);
+    }
+
+    private void launch(List<VideoItem> batch, int kind) {
+        requestKind = kind;
+        List<Uri> uris = new ArrayList<>();
+        for (VideoItem v : batch) uris.add(mediaStoreUri(v));
+        try {
+            PendingIntent pi = requestMaker.make(activity.getContentResolver(), uris, kind);
+            deleteLauncher.launch(new IntentSenderRequest.Builder(pi.getIntentSender()).build());
+        } catch (RuntimeException e) {
+            toast((kind == REQ_UNTRASH ? "Couldn't restore: " : "Couldn't delete: ") + e.getMessage());
+            failedCount += pending.size();
+            pending.clear();
+            if (kind == REQ_UNTRASH) busy = false; else finish();
+        }
+    }
+
+    private void onTrashResult(boolean ok) {
+        if (requestKind == REQ_UNTRASH) {
+            busy = false;
+            List<VideoItem> back = new ArrayList<>(pending);
+            pending.clear();
+            if (ok) {
+                toast(back.size() == 1 ? "Restored 1 video" : "Restored " + back.size() + " videos");
+                callback.onRestored(back);
+            }
+            return;
+        }
+        if (ok) deleted.addAll(pending);
+        pending.clear();
+        finish();
+    }
+
+    /** "Deleted N · Undo" (Android 11+). */
+    @Nullable
+    com.google.android.material.snackbar.Snackbar undoBar() {
+        return undoBar;
+    }
+
+    static String trashedMessage(int n) {
+        return n == 1 ? "Deleted 1 video" : "Deleted " + n + " videos";
     }
 
     static String confirmTitle(int n) {
-        return n == 1 ? "Delete video?" : "Delete " + n + " videos?";
+        return n == 1 ? "Delete permanently?" : "Delete " + n + " videos permanently?";
     }
 
     static String confirmMessage(List<VideoItem> vids) {
@@ -115,7 +213,12 @@ final class DeleteVideosFlow {
         String what = vids.size() == 1 ? "\u201c" + vids.get(0).title + "\u201d" : vids.size() + " videos";
         String size = bytes > 0 ? " (" + Fmt.size(bytes) + ")" : "";
         return what + size + " will be"
-                + " permanently deleted from this phone, including your gallery and other apps. This can't be undone.";
+                + " permanently deleted from this phone, including your gallery and other apps. "
+                + "Android " + androidVersionName() + " has no trash, so this can't be undone.";
+    }
+
+    private static String androidVersionName() {
+        return Build.VERSION.SDK_INT >= 29 ? "10" : Build.VERSION.SDK_INT >= 28 ? "9" : "8 and older";
     }
 
     /** Our confirmation, ONCE for the whole batch. */
@@ -143,6 +246,7 @@ final class DeleteVideosFlow {
 
     private void begin(List<VideoItem> vids) {
         busy = true;
+        requestKind = REQ_DELETE;
         pending.clear();
         deleted.clear();
         failedCount = 0;
@@ -189,22 +293,14 @@ final class DeleteVideosFlow {
     /** Android 11+: one system delete request for the whole batch. */
     private void requestDelete(List<VideoItem> batch) {
         if (Build.VERSION.SDK_INT < 30) return;
-        List<Uri> uris = new ArrayList<>();
-        for (VideoItem v : batch) uris.add(mediaStoreUri(v));
-        try {
-            PendingIntent pi = MediaStore.createDeleteRequest(activity.getContentResolver(), uris);
-            deleteLauncher.launch(new IntentSenderRequest.Builder(pi.getIntentSender()).build());
-        } catch (RuntimeException e) {
-            toast("Couldn't delete: " + e.getMessage());
-            failedCount += pending.size();
-            pending.clear();
-            finish();
-        }
+        launch(batch, REQ_DELETE);
     }
 
     @VisibleForTesting
     void onSystemResult(boolean ok) {
-        if (Build.VERSION.SDK_INT >= 30) {
+        if (requestKind == REQ_TRASH || requestKind == REQ_UNTRASH) {
+            onTrashResult(ok);
+        } else if (Build.VERSION.SDK_INT >= 30) {
             // One request covered the batch: the system deleted all of them or none.
             if (ok) deleted.addAll(pending);
             pending.clear();
@@ -253,10 +349,12 @@ final class DeleteVideosFlow {
 
     private void finish() {
         busy = false;
+        final boolean trashed = requestKind == REQ_TRASH;
         final List<VideoItem> result = Collections.unmodifiableList(new ArrayList<>(deleted));
         deleted.clear();
         final Context app = activity.getApplicationContext();
-        for (VideoItem v : result) Prefs.clearResume(app, v.resumeKey());
+        // Trashed videos may come back: keep their resume points (purged with the video).
+        if (!trashed) for (VideoItem v : result) Prefs.clearResume(app, v.resumeKey());
         if (!result.isEmpty()) {
             io.execute(() -> {
                 for (VideoItem v : result) Shortcuts.removeContinueWatchingFor(app, v.id, v.uri);
@@ -269,8 +367,24 @@ final class DeleteVideosFlow {
             sb.append(failedCount == 1 ? "1 video couldn't be deleted" : failedCount + " videos couldn't be deleted");
         }
         if (sb.length() == 0) sb.append("Nothing was deleted");
-        toast(sb.toString());
+        if (trashed && !result.isEmpty()) {
+            showUndo(result, failedCount);
+        } else {
+            toast(sb.toString());
+        }
         callback.onDeleteFinished(result);
+    }
+
+    private void showUndo(List<VideoItem> trashedVideos, int failed) {
+        android.view.View root = activity.findViewById(android.R.id.content);
+        String msg = trashedMessage(trashedVideos.size());
+        if (failed > 0) msg += " · " + failed + " couldn't be deleted";
+        undoBar = com.google.android.material.snackbar.Snackbar.make(root, msg, 6000)
+                .setAction(R.string.undo, v -> untrash(trashedVideos))
+                .setActionTextColor(ContextCompat.getColor(activity, R.color.accent_text))
+                .setBackgroundTint(ContextCompat.getColor(activity, R.color.surface3))
+                .setTextColor(ContextCompat.getColor(activity, R.color.text_primary));
+        undoBar.show();
     }
 
     static Uri mediaStoreUri(VideoItem v) {

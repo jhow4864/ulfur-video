@@ -23,6 +23,7 @@ import android.widget.Toast;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
@@ -108,6 +109,9 @@ public class VaultActivity extends AppCompatActivity implements VaultMigration.L
                 return true;
             } else if (id == R.id.action_vault_delete) {
                 confirmDelete(selectedEntries());
+                return true;
+            } else if (id == R.id.action_vault_trash) {
+                startActivity(TrashActivity.intent(this, true));
                 return true;
             }
             return false;
@@ -277,6 +281,7 @@ public class VaultActivity extends AppCompatActivity implements VaultMigration.L
     private void reload() {
         final android.content.Context app = getApplicationContext();
         io.execute(() -> {
+            Vault.purgeExpired(app, System.currentTimeMillis());
             List<Vault.Entry> l = Vault.list(app);
             long used = Vault.usedBytes(app);
             long free = Vault.dir(app).getUsableSpace();
@@ -381,27 +386,48 @@ public class VaultActivity extends AppCompatActivity implements VaultMigration.L
         }
     }
 
-    /** Bulk "Delete permanently" (1.4.0). Package-private + returns the dialog for tests (1.5.1). */
-    androidx.appcompat.app.AlertDialog confirmDelete(List<Vault.Entry> list) {
+    /**
+     * 1.6.0: Delete moves the selection to the private trash (still encrypted, 30 days) with
+     * "Deleted N · Undo"; delete forever / empty trash are in ⋮ → Trash. Returns the snackbar
+     * for tests (null when nothing was selected).
+     */
+    @Nullable
+    com.google.android.material.snackbar.Snackbar confirmDelete(List<Vault.Entry> list) {
         if (list.isEmpty()) {
             Toast.makeText(this, "Select some videos first", Toast.LENGTH_SHORT).show();
             return null;
         }
-        String what = list.size() == 1 ? "\u201c" + list.get(0).name + "\u201d will" : list.size() + " videos will";
-        androidx.appcompat.app.AlertDialog dlg = new MaterialAlertDialogBuilder(this)
-                .setTitle(list.size() == 1 ? "Delete permanently?" : "Delete " + list.size() + " videos permanently?")
-                .setMessage(what + " be deleted from this phone. This can't be undone.")
-                .setNegativeButton(android.R.string.cancel, null)
-                .setPositiveButton("Delete", (d, w) -> {
-                    final android.content.Context app = getApplicationContext();
-                    setSelecting(false);
-                    io.execute(() -> {
-                        for (Vault.Entry e : list) Vault.delete(app, e);
-                        handler.post(this::reload);
-                    });
-                })
-                .show();
-        return dlg;
+        final android.content.Context app = getApplicationContext();
+        final List<Vault.Entry> batch = new ArrayList<>(list);
+        setSelecting(false);
+        // Hide them right away; the index update follows on the io thread.
+        List<Vault.Entry> left = new ArrayList<>(entries);
+        left.removeAll(batch);
+        entries.clear();
+        entries.addAll(left);
+        adapter.notifyDataSetChanged();
+        emptyView.setVisibility(entries.isEmpty() ? View.VISIBLE : View.GONE);
+        io.execute(() -> {
+            try {
+                Vault.trash(app, batch, System.currentTimeMillis());
+            } catch (java.io.IOException ignored) {
+            }
+            handler.post(this::reload);
+        });
+        com.google.android.material.snackbar.Snackbar sb = com.google.android.material.snackbar.Snackbar
+                .make(findViewById(R.id.vault_root), DeleteVideosFlow.trashedMessage(batch.size()), 6000)
+                .setAction(R.string.undo, v -> io.execute(() -> {
+                    try {
+                        Vault.restore(app, batch);
+                    } catch (java.io.IOException ignored) {
+                    }
+                    handler.post(this::reload);
+                }))
+                .setActionTextColor(ContextCompat.getColor(this, R.color.private_ink))
+                .setBackgroundTint(ContextCompat.getColor(this, R.color.private_stroke))
+                .setTextColor(ContextCompat.getColor(this, R.color.text_primary));
+        sb.show();
+        return sb;
     }
 
     /** Moves one or many videos out to Movies/UlfurVideo, one after the other, with one progress dialog. */

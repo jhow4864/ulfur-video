@@ -142,6 +142,11 @@
             android:exported="false"
             android:label="@string/vault_title"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|uiMode"/>
+        <activity
+            android:name=".TrashActivity"
+            android:exported="false"
+            android:label="@string/trash_title"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|uiMode"/>
 
         <service
             android:name=".PlaybackService"

@@ -26,6 +26,15 @@
     <string name="vault_open_settings">Open security settings</string>
     <string name="vault_warning">Private videos are encrypted and stored only inside Ulfur Video on this phone. They aren\'t in your phone\'s backups. Uninstalling the app or clearing its storage permanently deletes them. Move them out before you uninstall or switch phones.</string>
     <string name="vault_migration_retry">Try again</string>
+    <string name="undo">Undo</string>
+    <string name="trash_title">Trash</string>
+    <string name="trash_private_title">Private trash</string>
+    <string name="trash_empty">Trash is empty</string>
+    <string name="trash_restore_all">Restore all</string>
+    <string name="trash_empty_action">Empty trash</string>
+    <string name="trash_info_gallery">Deleted videos stay in Android\'s trash for 30 days, then they\'re deleted for good. Tap a video to restore it or delete it now.</string>
+    <string name="trash_info_private">Deleted private videos stay here, still encrypted, for 30 days, then they\'re deleted for good. Tap a video to restore it or delete it now.</string>
+    <string name="trash_info_no_trash">Android 10 and older have no trash: deleting a video removes it permanently (Ulfur Video asks first).</string>
     <string name="vault_migration_running">Encrypting private videos · %1$d of %2$d</string>
     <string name="vault_migration_running_body">%1$s of %2$s. Each video stays in its old form until its encrypted copy has been checked, so it\'s safe to leave or close the app.</string>
     <string name="vault_migration_failed_body">These are still stored unencrypted (nothing was lost). Ulfur Video tries again next time it starts.</string>

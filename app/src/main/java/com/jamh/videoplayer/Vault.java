@@ -73,6 +73,8 @@ final class Vault {
         boolean enc;
         /** Encrypted storage file name ({@code <id>.uvx}), when {@link #enc}. */
         String store;
+        /** 1.6.0: moved to the (app-internal, still encrypted) trash at this time; 0 = not trashed. */
+        long trashedAt;
         String name;
         String mime;
         long size;
@@ -86,7 +88,7 @@ final class Vault {
             return new JSONObject().put("id", id).put("file", file).put("name", name).put("mime", mime)
                     .put("size", size).put("duration", durationMs).put("w", width).put("h", height)
                     .put("added", addedMs).put("sha256", sha256 == null ? "" : sha256)
-                    .put("enc", enc).put("store", store == null ? "" : store);
+                    .put("enc", enc).put("store", store == null ? "" : store).put("trashed", trashedAt);
         }
 
         static Entry fromJson(JSONObject o) {
@@ -103,6 +105,7 @@ final class Vault {
             e.sha256 = o.optString("sha256");
             e.enc = o.optBoolean("enc", false);
             e.store = o.optString("store", "");
+            e.trashedAt = o.optLong("trashed", 0);
             return e;
         }
     }
@@ -176,8 +179,65 @@ final class Vault {
         return out;
     }
 
+    /** Entries shown in Private videos (not in the trash). */
     static synchronized List<Entry> list(Context ctx) {
-        return listAll(ctx);
+        List<Entry> out = new ArrayList<>();
+        for (Entry e : listAll(ctx)) if (e.trashedAt <= 0) out.add(e);
+        return out;
+    }
+
+    // ------------------------------------------------------------------ trash (1.6.0)
+
+    static final long TRASH_DAYS = 30;
+    static final long TRASH_MS = TRASH_DAYS * 24L * 60 * 60 * 1000;
+
+    /** Entries in the private trash, most recently trashed first. */
+    static synchronized List<Entry> listTrashed(Context ctx) {
+        List<Entry> out = new ArrayList<>();
+        for (Entry e : listAll(ctx)) if (e.trashedAt > 0) out.add(e);
+        out.sort((a, b) -> Long.compare(b.trashedAt, a.trashedAt));
+        return out;
+    }
+
+    /** Moves entries to the trash (files stay where they are, encrypted). Returns how many. */
+    static synchronized int trash(Context ctx, List<Entry> entries, long now) throws IOException {
+        return setTrashed(ctx, entries, now);
+    }
+
+    static synchronized int restore(Context ctx, List<Entry> entries) throws IOException {
+        return setTrashed(ctx, entries, 0);
+    }
+
+    private static int setTrashed(Context ctx, List<Entry> entries, long value) throws IOException {
+        java.util.Set<String> ids = new java.util.HashSet<>();
+        for (Entry e : entries) ids.add(e.id);
+        List<Entry> l = readIndex(ctx);
+        int n = 0;
+        for (Entry e : l) {
+            if (ids.contains(e.id)) {
+                e.trashedAt = value;
+                n++;
+            }
+        }
+        if (n > 0) save(ctx, l);
+        for (Entry e : entries) e.trashedAt = value;
+        return n;
+    }
+
+    /** Permanently deletes trashed entries older than 30 days. Returns how many. */
+    static synchronized int purgeExpired(Context ctx, long now) {
+        int n = 0;
+        for (Entry e : listTrashed(ctx)) {
+            if (now - e.trashedAt >= TRASH_MS) {
+                delete(ctx, e);
+                n++;
+            }
+        }
+        return n;
+    }
+
+    static long expiresAt(Entry e) {
+        return e.trashedAt + TRASH_MS;
     }
 
     /** Raw index, including entries whose file is missing (used by the migration). */

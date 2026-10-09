@@ -1,4 +1,5 @@
 <menu xmlns:android="http://schemas.android.com/apk/res/android" xmlns:app="http://schemas.android.com/apk/res-auto">
     <item android:id="@+id/action_lock_now" android:title="@string/vault_lock_now" android:icon="@drawable/ic_lock"
         app:iconTint="?attr/colorOnSurface" app:showAsAction="ifRoom"/>
+    <item android:id="@+id/action_vault_trash" android:title="@string/trash_title" app:showAsAction="never"/>
 </menu>

@@ -85,7 +85,15 @@ public class MainActivity extends AppCompatActivity implements LibraryAdapter.Li
 
     private final MoveToPrivateFlow moveToPrivate = new MoveToPrivateFlow(this, this::refresh);
     /** 1.5.1: bulk / single delete from selection mode (Videos, folders, Clips). */
-    private final DeleteVideosFlow deleteFlow = new DeleteVideosFlow(this, this::onVideosDeleted);
+    private final DeleteVideosFlow deleteFlow = new DeleteVideosFlow(this, new DeleteVideosFlow.Callback() {
+        @Override public void onDeleteFinished(List<VideoItem> deleted) {
+            onVideosDeleted(deleted);
+        }
+
+        @Override public void onRestored(List<VideoItem> restored) {
+            if (!isDestroyed()) refresh(); // Undo: back from the trash
+        }
+    });
 
     private final ActivityResultLauncher<String[]> permissionLauncher =
             registerForActivityResult(new ActivityResultContracts.RequestMultiplePermissions(), r -> {
@@ -622,6 +630,8 @@ public class MainActivity extends AppCompatActivity implements LibraryAdapter.Li
             mm.setVisible(MediaAccess.isSupported());
             mm.setChecked(MediaAccess.canManageMedia(this));
         }
+        MenuItem trash = menu.findItem(R.id.action_trash);
+        if (trash != null) trash.setVisible(DeleteVideosFlow.usesTrash()); // Android 10: no trash
         MenuItem select = menu.findItem(R.id.action_select);
         if (select != null) select.setVisible(tab != TAB_FOLDERS || openFolderId != null);
         viewMode.setIcon(grid ? R.drawable.ic_list : R.drawable.ic_grid);
@@ -687,6 +697,9 @@ public class MainActivity extends AppCompatActivity implements LibraryAdapter.Li
             return true;
         } else if (id == R.id.action_private) {
             startActivity(new Intent(this, VaultActivity.class));
+            return true;
+        } else if (id == R.id.action_trash) {
+            startActivity(TrashActivity.intent(this, false));
             return true;
         } else if (id == R.id.action_refresh) {
             refresh();

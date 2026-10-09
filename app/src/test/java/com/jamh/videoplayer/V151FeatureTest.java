@@ -68,10 +68,34 @@ public class V151FeatureTest {
         @Override public int update(@NonNull Uri u, ContentValues v, String s, String[] a) { return 0; }
     }
 
+    /** Records MediaStore requests (Robolectric has no MediaProvider to create them). */
+    static final List<int[]> requests = Collections.synchronizedList(new ArrayList<>());
+    static final List<List<Uri>> requestUris = Collections.synchronizedList(new ArrayList<>());
+
+    static void stubRequests(Application app) {
+        requests.clear();
+        requestUris.clear();
+        DeleteVideosFlow.requestMaker = (cr, uris, kind) -> {
+            requests.add(new int[]{kind, uris.size()});
+            requestUris.add(new ArrayList<>(uris));
+            return android.app.PendingIntent.getActivity(app, requests.size(),
+                    new android.content.Intent("test.REQUEST"), android.app.PendingIntent.FLAG_IMMUTABLE);
+        };
+    }
+
+    private static DeleteVideosFlow.RequestMaker realMaker;
+
+    @org.junit.Before
+    public void setUpRequests() {
+        if (realMaker == null) realMaker = DeleteVideosFlow.requestMaker;
+        stubRequests(app);
+    }
+
     @After
     public void tearDown() {
         MediaAccess.overrideForTest = null;
         FakeMediaStore.deleted.clear();
+        DeleteVideosFlow.requestMaker = realMaker;
     }
 
     private MainActivity library(boolean grid, int tab, List<VideoItem> vids, ActivityController<MainActivity>[] out) throws Exception {
@@ -101,7 +125,7 @@ public class V151FeatureTest {
     }
 
     @SuppressWarnings("unchecked")
-    private void bulkDelete(boolean grid, int tab, String file) throws Exception {
+    void bulkDelete(boolean grid, int tab, String file) throws Exception {
         Robolectric.setupContentProvider(FakeMediaStore.class, "media");
         MediaAccess.overrideForTest = true;   // media management allowed: our dialog, no system prompt
         List<VideoItem> vids = new PreviewScreenshotTest().fakeVideos();
@@ -125,36 +149,48 @@ public class V151FeatureTest {
         Menu m = tb.getMenu();
         assertNotNull("trash icon in the selection toolbar", m.findItem(R.id.action_delete_selected));
 
-        // One confirmation for the whole batch.
+        // 1.6.0 (Android 11+): Delete moves the batch to Android's trash with ONE request and no
+        // dialog of ours (it's undoable); auto-approved with media management.
         a.onOptionsItemSelected(m.findItem(R.id.action_delete_selected));
         idle();
-        AlertDialog d = (AlertDialog) ShadowDialog.getLatestDialog();
-        assertNotNull(d);
-        TextView msg = d.findViewById(android.R.id.message);
-        assertTrue(msg.getText().toString(), msg.getText().toString().startsWith("3 videos"));
-        assertTrue(msg.getText().toString().contains("permanently deleted"));
-        if (file != null) {
-            Bitmap base = renderToBitmap(a.getWindow().getDecorView(), 1080, 2340);
-            save(a.getWindow().getDecorView(), file, 1080, 2340);
-            View dv = d.getWindow().getDecorView();
-            int w = 1080 - 2 * 72;
-            dv.measure(View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.EXACTLY),
-                    View.MeasureSpec.makeMeasureSpec(2340 - 60, View.MeasureSpec.AT_MOST));
-            dv.layout(0, 0, w, dv.getMeasuredHeight());
-            Canvas cv = new Canvas(base);
-            cv.drawColor(0x99000000);
-            cv.translate(72, (2340 - dv.getMeasuredHeight()) / 2f);
-            dv.draw(cv);
-            V13FeatureTest.write(base, file.replace(".png", "_confirm.png"));
-        }
-        d.getButton(DialogInterface.BUTTON_POSITIVE).performClick();
-        assertTrue("deleted through MediaStore without a system prompt",
-                await(() -> { idle(); return FakeMediaStore.deleted.size() == 3 && !adapter.isSelectionMode(); }, 5000));
+        assertTrue("no confirmation dialog of ours", ShadowDialog.getLatestDialog() == null
+                || !ShadowDialog.getLatestDialog().isShowing());
+        assertEquals(1, requests.size());
+        assertEquals(DeleteVideosFlow.REQ_TRASH, requests.get(0)[0]);
+        assertEquals(3, requests.get(0)[1]);
         for (int i = 0; i < 3; i++) {
-            assertTrue(FakeMediaStore.deleted.contains(DeleteVideosFlow.mediaStoreUri(shown.get(i))));
+            assertTrue(requestUris.get(0).contains(DeleteVideosFlow.mediaStoreUri(shown.get(i))));
         }
+        assertTrue("nothing deleted permanently", FakeMediaStore.deleted.isEmpty());
+        DeleteVideosFlow flow = (DeleteVideosFlow) field(a, "deleteFlow");
+        flow.onSystemResult(true);   // auto-approved
+        idle();
         assertFalse("selection mode exited", adapter.isSelectionMode());
         assertEquals(View.GONE, a.findViewById(R.id.selection_bar).getVisibility());
+        List<VideoItem> all = (List<VideoItem>) field(a, "allVideos");
+        for (int i = 0; i < 3; i++) assertFalse(all.contains(shown.get(i)));
+        com.google.android.material.snackbar.Snackbar bar = flow.undoBar();
+        assertNotNull("Deleted 3 · Undo", bar);
+        TextView sbText = bar.getView().findViewById(com.google.android.material.R.id.snackbar_text);
+        assertEquals("Deleted 3 videos", sbText.getText().toString());
+        android.widget.Button undo = bar.getView().findViewById(com.google.android.material.R.id.snackbar_action);
+        assertEquals("Undo", undo.getText().toString());
+        if (file != null) {
+            bar.getView().setVisibility(View.VISIBLE);
+            idle();
+            renderToBitmap(a.getWindow().getDecorView(), 1080, 2340);
+            save(a.getWindow().getDecorView(), file, 1080, 2340);
+        }
+        // Undo: one restore request for the same batch.
+        undo.performClick();
+        idle();
+        assertEquals(2, requests.size());
+        assertEquals(DeleteVideosFlow.REQ_UNTRASH, requests.get(1)[0]);
+        assertEquals(requestUris.get(0), requestUris.get(1));
+        flow.onSystemResult(true);
+        idle();
+        assertFalse(flow.isBusy());
+        assertEquals("Restored 3 videos", org.robolectric.shadows.ShadowToast.getTextOfLatestToast());
         c[0].pause().stop().destroy();
     }
 
@@ -218,9 +254,12 @@ public class V151FeatureTest {
         adapter.toggle(vids.get(1));
         idle();
         DeleteVideosFlow flow = (DeleteVideosFlow) field(a, "deleteFlow");
-        // Simulate the batch handed to the single system request, then the user tapping "Allow".
-        List<VideoItem> pending = (List<VideoItem>) field(flow, "pending");
-        pending.addAll(a.selectedVideos());
+        // One system "Move to trash?" request for the batch, then the user tapping "Allow".
+        a.deleteSelected();
+        idle();
+        assertEquals(1, requests.size());
+        assertEquals(DeleteVideosFlow.REQ_TRASH, requests.get(0)[0]);
+        assertEquals(2, requests.get(0)[1]);
         flow.onSystemResult(true);
         idle();
         assertFalse(adapter.isSelectionMode());
@@ -230,7 +269,9 @@ public class V151FeatureTest {
         // Declining the system prompt keeps the selection and the videos.
         a.onVideoLongClick(vids.get(2), a.findViewById(R.id.recycler));
         idle();
-        pending.add(vids.get(2));
+        flow.trash(Collections.singletonList(vids.get(2))); // (refresh() re-queried the empty test MediaStore)
+        idle();
+        assertEquals(2, requests.size());
         flow.onSystemResult(false);
         idle();
         assertTrue(adapter.isSelectionMode());
@@ -239,10 +280,45 @@ public class V151FeatureTest {
     }
 
     @Test
+    @Config(sdk = 29, qualifiers = "w411dp-h891dp-port-xxhdpi")
+    @SuppressWarnings("unchecked")
+    public void android10KeepsPermanentDeleteWithAClearLabel() throws Exception {
+        Robolectric.setupContentProvider(FakeMediaStore.class, "media");
+        assertFalse(DeleteVideosFlow.usesTrash());
+        List<VideoItem> vids = new PreviewScreenshotTest().fakeVideos();
+        ActivityController<MainActivity>[] c = new ActivityController[1];
+        MainActivity a = library(true, 0, vids, c);
+        LibraryAdapter adapter = (LibraryAdapter) field(a, "adapter");
+        a.onVideoLongClick(vids.get(0), a.findViewById(R.id.recycler));
+        adapter.toggle(vids.get(1));
+        idle();
+        a.deleteSelected();
+        idle();
+        AlertDialog d = (AlertDialog) ShadowDialog.getLatestDialog();
+        assertNotNull("our one confirmation", d);
+        assertEquals("Delete 2 videos permanently?",
+                ((TextView) d.findViewById(androidx.appcompat.R.id.alertTitle)).getText().toString());
+        String msg = ((TextView) d.findViewById(android.R.id.message)).getText().toString();
+        assertTrue(msg, msg.contains("Android 10 has no trash"));
+        d.getButton(DialogInterface.BUTTON_POSITIVE).performClick();
+        assertTrue(await(() -> { idle(); return FakeMediaStore.deleted.size() == 2; }, 5000));
+        assertTrue("no trash requests on Android 10", requests.isEmpty());
+        // No Trash entry in the menu on Android 10.
+        MaterialToolbar tb = a.findViewById(R.id.toolbar);
+        a.onPrepareOptionsMenu(tb.getMenu());
+        if (tb.getMenu().findItem(R.id.action_trash) != null) {
+            assertFalse(tb.getMenu().findItem(R.id.action_trash).isVisible());
+        }
+        c[0].pause().stop().destroy();
+    }
+
+    @Test
     public void confirmationTexts() {
         List<VideoItem> vids = new PreviewScreenshotTest().fakeVideos();
-        assertEquals("Delete video?", DeleteVideosFlow.confirmTitle(1));
-        assertEquals("Delete 4 videos?", DeleteVideosFlow.confirmTitle(4));
+        assertEquals("Delete permanently?", DeleteVideosFlow.confirmTitle(1));
+        assertEquals("Delete 4 videos permanently?", DeleteVideosFlow.confirmTitle(4));
+        assertEquals("Deleted 1 video", DeleteVideosFlow.trashedMessage(1));
+        assertEquals("Deleted 4 videos", DeleteVideosFlow.trashedMessage(4));
         String one = DeleteVideosFlow.confirmMessage(Collections.singletonList(vids.get(0)));
         assertTrue(one, one.startsWith("\u201c" + vids.get(0).title + "\u201d"));
         assertTrue(one.contains("can't be undone"));
@@ -252,7 +328,7 @@ public class V151FeatureTest {
 
     @Test
     @Config(sdk = 34, qualifiers = "w411dp-h891dp-port-xxhdpi")
-    public void vaultBulkDeletePermanentlyStillWorks() throws Exception {
+    public void vaultBulkDeleteGoesToPrivateTrash() throws Exception {
         Method add = Vault.class.getDeclaredMethod("add", android.content.Context.class, Vault.Entry.class);
         add.setAccessible(true);
         List<Vault.Entry> list = new ArrayList<>();
@@ -275,11 +351,19 @@ public class V151FeatureTest {
         idle();
         VaultLock.unlock();
         a.showContent();
-        AlertDialog d = a.confirmDelete(list);
-        idle();
-        assertEquals("Delete 3 videos permanently?", ((TextView) d.findViewById(androidx.appcompat.R.id.alertTitle)).getText().toString());
-        d.getButton(DialogInterface.BUTTON_POSITIVE).performClick();
+        // 1.6.0: Delete moves them to the private trash (files kept, encrypted) with Undo.
+        com.google.android.material.snackbar.Snackbar sb = a.confirmDelete(list);
+        assertNotNull(sb);
         assertTrue(await(() -> Vault.list(app).isEmpty(), 5000));
+        assertEquals(3, Vault.listTrashed(app).size());
+        for (Vault.Entry e : list) assertTrue("still on disk in the trash", Vault.fileOf(app, e).exists());
+        ((TextView) sb.getView().findViewById(com.google.android.material.R.id.snackbar_action)).performClick();
+        assertTrue("Undo restores", await(() -> { idle(); return Vault.list(app).size() == 3; }, 5000));
+        assertTrue(Vault.listTrashed(app).isEmpty());
+        // Trash again, then purge after 30 days deletes them for good.
+        Vault.trash(app, Vault.list(app), System.currentTimeMillis() - Vault.TRASH_MS - 1000);
+        assertEquals(3, Vault.purgeExpired(app, System.currentTimeMillis()));
+        assertTrue(Vault.listAll(app).isEmpty());
         for (Vault.Entry e : list) assertFalse(Vault.fileOf(app, e).exists());
         assertNull(a.confirmDelete(new ArrayList<>()));
         ctl.pause().stop().destroy();
