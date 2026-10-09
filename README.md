@@ -280,3 +280,12 @@ showed the crash dialog, so the dialog never appeared either.
 - Tests: `V192CastStartupTest` (Main, Private and Player start with Cast unavailable and create no Cast
   fragment; Cast not even initialised after a crash or in safe mode; the mini bar shows only while
   casting and Stop ends the session; no layout or source uses `MiniControllerFragment`).
+
+## v1.9.3 (versionCode 17): crash report shown once (hotfix)
+
+- The crash report file is deleted as soon as it is read, before the dialog shows, so each crash is
+  shown at most once. Reports written by another version (e.g. the old 1.9.1 one) are deleted at startup.
+- The dialog has Copy crash log, Share and an always-visible **Dismiss**; it is cancelable and the log area
+  is height-capped so the buttons stay on screen.
+- Cast still stays off for the launch right after a crash.
+- Tests: `V193CrashReportTest`.

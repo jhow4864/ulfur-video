@@ -392,6 +392,13 @@ public class V17FeatureTest {
         a.showContent();
         TextView storage = a.findViewById(R.id.vault_storage);
         assertTrue(await(() -> storage.getText().toString().startsWith("0 videos"), 5000));
+        // Both reloads (onStart + showContent) must have landed before we bind our own list.
+        try {
+            ((java.util.concurrent.ExecutorService) TestUtil.field(a, "io")).submit(() -> { }).get();
+        } catch (Exception e) {
+            throw new AssertionError(e);
+        }
+        idle();
         List<Vault.Entry> list = new ArrayList<>(Arrays.asList(
                 entry("v1", "Wedding speech.mp4", 312_000, 486_000_000L, 1920, 1080, 3_000),
                 entry("v2", "Passport scan.mp4", 14_000, 22_000_000L, 1080, 1920, 4_000),

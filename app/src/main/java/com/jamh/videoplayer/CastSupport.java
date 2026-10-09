@@ -58,7 +58,7 @@ final class CastSupport {
         if (disabled || failed) return true;
         try {
             if (CrashGuard.safeMode()) return true;
-            return CrashGuard.hasPendingReport(ctx);
+            return CrashGuard.crashedLastLaunch() || CrashGuard.hasPendingReport(ctx);
         } catch (Throwable t) {
             return true;
         }

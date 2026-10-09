@@ -293,10 +293,14 @@ public class MainActivity extends AppCompatActivity implements LibraryAdapter.Li
 
     private androidx.appcompat.app.AlertDialog crashDialog;
 
-    /** Shows the last crash (filesDir/last_crash.txt) once, with Copy crash log / Share. */
+    /**
+     * Shows the last crash (filesDir/last_crash.txt) at most once: 1.9.3 deletes the file as soon as
+     * it is read, and reports from other versions are dropped. Copy crash log / Share / Dismiss,
+     * cancelable; the log area is height-capped so the buttons are always on screen.
+     */
     androidx.appcompat.app.AlertDialog maybeShowCrashReport() {
         if (crashDialog != null && crashDialog.isShowing()) return crashDialog;
-        final String report = CrashGuard.pendingReport(this);
+        final String report = CrashGuard.takeReport(this);
         if (report == null) return null;
         TextView tv = new TextView(this);
         tv.setText(report);
@@ -305,21 +309,29 @@ public class MainActivity extends AppCompatActivity implements LibraryAdapter.Li
         tv.setTypeface(android.graphics.Typeface.MONOSPACE);
         tv.setTextColor(ContextCompat.getColor(this, R.color.text_secondary));
         tv.setPadding(dp(20), dp(8), dp(20), dp(8));
-        android.widget.ScrollView sv = new android.widget.ScrollView(this);
+        final int maxH = (int) (getResources().getDisplayMetrics().heightPixels * 0.4f);
+        android.widget.ScrollView sv = new android.widget.ScrollView(this) {
+            @Override
+            protected void onMeasure(int w, int h) {
+                super.onMeasure(w, View.MeasureSpec.makeMeasureSpec(maxH, View.MeasureSpec.AT_MOST));
+            }
+        };
         sv.addView(tv);
         crashDialog = new MaterialAlertDialogBuilder(this)
                 .setTitle("Ulfur Video crashed last time")
                 .setMessage("Sorry about that. Please send this crash log so it can be fixed.")
                 .setView(sv)
+                .setCancelable(true)
                 .setPositiveButton("Copy crash log", null)
                 .setNeutralButton("Share", null)
-                .setNegativeButton("Dismiss", (d, w) -> CrashGuard.clearReport(this))
-                .show();
+                .setNegativeButton("Dismiss", (d, w) -> d.dismiss())
+                .create();
+        crashDialog.setCanceledOnTouchOutside(true);
+        crashDialog.show();
         crashDialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE).setOnClickListener(v -> {
             android.content.ClipboardManager cm = (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
             if (cm != null) cm.setPrimaryClip(android.content.ClipData.newPlainText("Ulfur Video crash log", report));
             Toast.makeText(this, "Crash log copied", Toast.LENGTH_SHORT).show();
-            CrashGuard.clearReport(this);
             crashDialog.dismiss();
         });
         crashDialog.getButton(android.content.DialogInterface.BUTTON_NEUTRAL).setOnClickListener(v -> {
@@ -328,7 +340,6 @@ public class MainActivity extends AppCompatActivity implements LibraryAdapter.Li
                     .putExtra(Intent.EXTRA_TEXT, report);
             try {
                 startActivity(Intent.createChooser(send, "Share crash log"));
-                CrashGuard.clearReport(this);
                 crashDialog.dismiss();
             } catch (ActivityNotFoundException e) {
                 Toast.makeText(this, "No app to share with", Toast.LENGTH_SHORT).show();

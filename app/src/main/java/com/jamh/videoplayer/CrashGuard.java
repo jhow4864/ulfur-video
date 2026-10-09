@@ -59,6 +59,8 @@ final class CrashGuard {
         final Context app = ctx.getApplicationContext();
         processStartElapsed = SystemClock.elapsedRealtime();
         safeMode = p(app).getInt("quick_crashes", 0) >= SAFE_MODE_AFTER;
+        dropStaleReport(app);
+        if (hasPendingReport(app)) crashedLastLaunch = true;
         final Thread.UncaughtExceptionHandler previous = Thread.getDefaultUncaughtExceptionHandler();
         Thread.setDefaultUncaughtExceptionHandler((thread, error) -> {
             try {
@@ -116,7 +118,56 @@ final class CrashGuard {
         }
     }
 
+    /** 1.9.3: this process started right after a crash (Cast stays off for this launch). */
+    private static volatile boolean crashedLastLaunch;
+
+    static boolean crashedLastLaunch() {
+        return crashedLastLaunch;
+    }
+
+    private static final java.util.regex.Pattern HEADER =
+            java.util.regex.Pattern.compile("^Ulfur Video \\S+ \\((\\d+)\\)");
+
+    /** versionCode in the report's first line, or -1 (unknown / unreadable). */
+    static int reportVersionCode(@Nullable String report) {
+        if (report == null) return -1;
+        java.util.regex.Matcher m = HEADER.matcher(report);
+        if (!m.find()) return -1;
+        try {
+            return Integer.parseInt(m.group(1));
+        } catch (NumberFormatException e) {
+            return -1;
+        }
+    }
+
+    /** 1.9.3: a report written by another version is stale (it's about old code): delete it. */
+    static void dropStaleReport(Context c) {
+        try {
+            if (!crashFile(c).isFile()) return;
+            if (reportVersionCode(pendingReport(c)) != BuildConfig.VERSION_CODE) {
+                //noinspection ResultOfMethodCallIgnored
+                crashFile(c).delete();
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /**
+     * 1.9.3: reads the report for this version and deletes the file straight away, so each crash is
+     * shown at most once, whatever happens to the dialog. Null when there is none (or it is stale).
+     */
+    @Nullable
+    static String takeReport(Context c) {
+        dropStaleReport(c);
+        String r = pendingReport(c);
+        //noinspection ResultOfMethodCallIgnored
+        crashFile(c).delete();
+        if (r != null) crashedLastLaunch = true;
+        return r;
+    }
+
     static void clearReport(Context c) {
+        crashedLastLaunch = false;
         //noinspection ResultOfMethodCallIgnored
         crashFile(c).delete();
     }
