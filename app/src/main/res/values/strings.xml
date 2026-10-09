@@ -41,4 +41,10 @@
     <string name="dont_ask_again">Don\'t ask me again</string>
     <string name="warn_before_private">Warn before moving to Private</string>
     <string name="library_hint">Long-press to select</string>
+    <string name="dont_ask_again_short">Don\'t ask again</string>
+    <string name="not_now">Not now</string>
+    <string name="open_settings">Open settings</string>
+    <string name="media_manage_title">Stop the delete pop-up?</string>
+    <string name="media_manage_body">When videos move to Private, Android asks \u201cAllow %1$s to delete these videos?\u201d every time.\n\nAllow media management so Android stops asking every time: tap Open settings, turn on \u201cAllow app to manage media\u201d, then come back.\n\nThis only lets %1$s edit and delete videos and pictures without asking. It doesn\'t give access to your other files.</string>
+    <string name="media_manage_menu">Media management permission</string>
 </resources>

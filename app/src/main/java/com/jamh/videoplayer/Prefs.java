@@ -41,6 +41,10 @@ public final class Prefs {
     public static boolean warnBeforePrivate(Context c) { return s(c).getBoolean("warn_before_private", true); }
     public static void setWarnBeforePrivate(Context c, boolean v) { s(c).edit().putBoolean("warn_before_private", v).apply(); }
 
+    /** 1.4.1: "Allow media management" prompt; true once the user ticks "Don't ask again". */
+    public static boolean mediaManagePromptOff(Context c) { return s(c).getBoolean("media_manage_prompt_off", false); }
+    public static void setMediaManagePromptOff(Context c, boolean v) { s(c).edit().putBoolean("media_manage_prompt_off", v).apply(); }
+
     public static boolean defaultBannerDismissed(Context c) { return s(c).getBoolean("default_banner_dismissed", false); }
     public static void setDefaultBannerDismissed(Context c) { s(c).edit().putBoolean("default_banner_dismissed", true).apply(); }
 

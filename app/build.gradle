@@ -23,8 +23,8 @@ android {
         applicationId 'com.jamh.videoplayer'
         minSdk 24
         targetSdk 34
-        versionCode 6
-        versionName '1.4.0'
+        versionCode 7
+        versionName '1.4.1'
 
         ndk {
             // Pixels are arm64; x86_64 kept for emulators, armeabi-v7a for older phones.

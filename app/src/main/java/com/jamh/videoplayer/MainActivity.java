@@ -79,6 +79,8 @@ public class MainActivity extends AppCompatActivity implements LibraryAdapter.Li
     private TextView selectionMoveButton, selectionSelectAll;
     /** Set when we sent the user to Settings or the "Open with" dialog; re-checked in onResume. */
     private boolean pendingDefaultCheck;
+    /** 1.4.1: last known media-management state, re-checked in onResume. */
+    private Boolean lastCanManageMedia;
 
     private final MoveToPrivateFlow moveToPrivate = new MoveToPrivateFlow(this, this::refresh);
 
@@ -243,6 +245,14 @@ public class MainActivity extends AppCompatActivity implements LibraryAdapter.Li
     protected void onResume() {
         super.onResume();
         refresh();
+        boolean canManage = MediaAccess.canManageMedia(this);
+        if (lastCanManageMedia != null && lastCanManageMedia != canManage && MediaAccess.isSupported()) {
+            Snackbar.make(findViewById(R.id.root), canManage
+                    ? "Media management allowed: no more delete pop-ups when moving to Private"
+                    : "Media management is off: Android will ask before deleting originals", Snackbar.LENGTH_LONG).show();
+        }
+        lastCanManageMedia = canManage;
+        invalidateOptionsMenu();
         DefaultPlayerHelper.Status status = DefaultPlayerHelper.check(this);
         updateDefaultBanner(status);
         if (pendingDefaultCheck) {
@@ -577,6 +587,11 @@ public class MainActivity extends AppCompatActivity implements LibraryAdapter.Li
         if (viewMode == null) return;   // selection menu
         MenuItem warn = menu.findItem(R.id.action_warn_private);
         if (warn != null) warn.setChecked(Prefs.warnBeforePrivate(this));
+        MenuItem mm = menu.findItem(R.id.action_media_manage);
+        if (mm != null) {
+            mm.setVisible(MediaAccess.isSupported());
+            mm.setChecked(MediaAccess.canManageMedia(this));
+        }
         MenuItem select = menu.findItem(R.id.action_select);
         if (select != null) select.setVisible(tab != TAB_FOLDERS || openFolderId != null);
         viewMode.setIcon(grid ? R.drawable.ic_list : R.drawable.ic_grid);
@@ -602,6 +617,20 @@ public class MainActivity extends AppCompatActivity implements LibraryAdapter.Li
             return true;
         } else if (id == R.id.action_select) {
             enterSelection(null);
+            return true;
+        } else if (id == R.id.action_media_manage) {
+            if (MediaAccess.canManageMedia(this)) {
+                new MaterialAlertDialogBuilder(this)
+                        .setTitle(R.string.media_manage_menu)
+                        .setMessage("Allowed. Moving videos to Private deletes the originals without Android asking.\n\n"
+                                + "To turn it off: Open settings, then switch off \u201cAllow app to manage media\u201d.")
+                        .setNegativeButton(android.R.string.ok, null)
+                        .setPositiveButton(R.string.open_settings, (d, w) -> moveToPrivate.openManageMediaSettings())
+                        .show();
+            } else {
+                Prefs.setMediaManagePromptOff(this, false);   // user is asking for it: forget "Don't ask again"
+                moveToPrivate.showMediaManagementPrompt(null);
+            }
             return true;
         } else if (id == R.id.action_warn_private) {
             boolean on = !Prefs.warnBeforePrivate(this);

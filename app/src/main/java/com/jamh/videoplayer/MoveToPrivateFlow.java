@@ -63,6 +63,10 @@ final class MoveToPrivateFlow {
     private int doneCount, failedCount, keptCount;
     private List<VideoItem> pendingPermission;
     @Nullable private Runnable pendingOnStarted;
+    private final ActivityResultLauncher<android.content.Intent> manageMediaSettings;
+    @Nullable private Runnable afterManageMediaSettings;
+    /** The media-management prompt is offered at most once per app session even without "Don't ask again". */
+    private static boolean manageMediaPromptShownThisSession;
 
     /** Construct from a field initializer or onCreate (registers activity-result launchers). */
     MoveToPrivateFlow(AppCompatActivity activity, Runnable onLibraryChanged) {
@@ -92,6 +96,14 @@ final class MoveToPrivateFlow {
                         deleteNextApi29();
                     }
                 });
+        manageMediaSettings = activity.registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), r -> {
+            Runnable next = afterManageMediaSettings;
+            afterManageMediaSettings = null;
+            if (MediaAccess.canManageMedia(activity)) {
+                toast("Media management allowed: Android won't ask before deleting the originals any more.");
+            }
+            if (next != null) next.run();
+        });
         writePermission = activity.registerForActivityResult(new ActivityResultContracts.RequestPermission(), granted -> {
             List<VideoItem> v = pendingPermission;
             Runnable started = pendingOnStarted;
@@ -175,8 +187,82 @@ final class MoveToPrivateFlow {
     }
 
     private void begin(List<VideoItem> vids, @Nullable Runnable onStarted) {
-        if (onStarted != null) onStarted.run();
-        copyIntoVault(new ArrayList<>(vids));
+        Runnable go = () -> {
+            if (onStarted != null) onStarted.run();
+            copyIntoVault(new ArrayList<>(vids));
+        };
+        if (shouldOfferMediaManagement()) {
+            // Ask BEFORE copying, so nothing is half-done while the user is in Settings.
+            showMediaManagementPrompt(go);
+        } else {
+            go.run();
+        }
+    }
+
+    // ------------------------------------------------------------- 1.4.1: media management (Android 12+)
+
+    /** Android 12+, not granted yet, the user hasn't said "Don't ask again", and not already offered this session. */
+    static void resetSessionPromptForTest() {
+        manageMediaPromptShownThisSession = false;
+    }
+
+    boolean shouldOfferMediaManagement() {
+        return MediaAccess.isSupported() && !MediaAccess.canManageMedia(activity)
+                && !Prefs.mediaManagePromptOff(activity) && !manageMediaPromptShownThisSession;
+    }
+
+    /**
+     * Explains the "Media management apps" special access. "Open settings" opens the toggle and continues
+     * with {@code then} when the user comes back (granted or not); "Not now" continues straight away and Android's
+     * own delete confirmation appears once for the batch.
+     */
+    AlertDialog showMediaManagementPrompt(@Nullable Runnable then) {
+        manageMediaPromptShownThisSession = true;
+        View box = LayoutInflater.from(activity).inflate(R.layout.dialog_dont_ask, null);
+        CheckBox dontAsk = box.findViewById(R.id.dont_ask_again);
+        dontAsk.setText(R.string.dont_ask_again_short);
+        final boolean[] handled = {false};
+        AlertDialog d = new MaterialAlertDialogBuilder(activity)
+                .setTitle(R.string.media_manage_title)
+                .setMessage(activity.getString(R.string.media_manage_body, activity.getString(R.string.app_name)))
+                .setView(box)
+                .setNegativeButton(R.string.not_now, (dlg, w) -> {
+                    handled[0] = true;
+                    if (dontAsk.isChecked()) Prefs.setMediaManagePromptOff(activity, true);
+                    if (then != null) then.run();
+                })
+                .setPositiveButton(R.string.open_settings, (dlg, w) -> {
+                    handled[0] = true;
+                    if (dontAsk.isChecked()) Prefs.setMediaManagePromptOff(activity, true);
+                    afterManageMediaSettings = then;
+                    if (!openManageMediaSettings()) {
+                        afterManageMediaSettings = null;
+                        if (then != null) then.run();
+                    }
+                })
+                .setOnCancelListener(dlg -> {
+                    // Back / tap outside: treat as "Not now" so the move still happens.
+                    if (!handled[0] && then != null) then.run();
+                })
+                .show();
+        return d;
+    }
+
+    /** Opens Settings › Media management apps › Ulfur Video. Returns false if no Settings screen could be opened. */
+    boolean openManageMediaSettings() {
+        try {
+            manageMediaSettings.launch(MediaAccess.settingsIntent(activity));
+            return true;
+        } catch (RuntimeException e) {
+            try {
+                manageMediaSettings.launch(MediaAccess.fallbackIntent(activity));
+                toast("Open Special app access › Media management apps › " + activity.getString(R.string.app_name));
+                return true;
+            } catch (RuntimeException e2) {
+                toast("Couldn't open Settings");
+                return false;
+            }
+        }
     }
 
     private void copyIntoVault(List<VideoItem> vids) {
@@ -265,22 +351,71 @@ final class MoveToPrivateFlow {
 
     /** The private copies are verified; now remove the originals from shared storage. */
     private void deleteOriginals() {
+        if (MediaAccess.canManageMedia(activity)) {
+            deleteDirectlyThenRequest();
+            return;
+        }
         if (Build.VERSION.SDK_INT >= 30) {
-            List<Uri> uris = new ArrayList<>();
-            for (VideoItem v : moved) uris.add(mediaStoreUri(v));
-            try {
-                PendingIntent pi = MediaStore.createDeleteRequest(activity.getContentResolver(), uris);
-                deleteLauncher.launch(new IntentSenderRequest.Builder(pi.getIntentSender()).build());
-            } catch (RuntimeException e) {
-                keptCount += moved.size();
-                rollBackAll();
-                toast("Couldn't remove the originals: " + e.getMessage());
-                busy = false;
-            }
+            requestDeleteApi30(new ArrayList<>(moved));
             return;
         }
         api29Index = 0;
         deleteNextApi29();
+    }
+
+    /**
+     * Media management granted (Android 12+): try a direct delete first; whatever MediaStore still refuses goes
+     * through createDeleteRequest, which the system now approves without showing a dialog.
+     */
+    private void deleteDirectlyThenRequest() {
+        final List<VideoItem> batch = new ArrayList<>(moved);
+        final Context app = activity.getApplicationContext();
+        io.execute(() -> {
+            List<VideoItem> deleted = new ArrayList<>();
+            List<VideoItem> refused = new ArrayList<>();
+            for (VideoItem v : batch) {
+                boolean ok = false;
+                try {
+                    ok = app.getContentResolver().delete(mediaStoreUri(v), null, null) > 0;
+                } catch (RuntimeException ignored) {
+                    // RecoverableSecurityException etc.: fall back to the (auto-approved) request
+                }
+                (ok ? deleted : refused).add(v);
+            }
+            main.post(() -> {
+                for (VideoItem v : deleted) {
+                    afterMoved(v);
+                    doneCount++;
+                    int i = moved.indexOf(v);
+                    if (i >= 0) {
+                        moved.remove(i);
+                        copies.remove(i);
+                    }
+                }
+                if (refused.isEmpty()) {
+                    finishBatch();
+                } else {
+                    requestDeleteApi30(refused);
+                }
+            });
+        });
+    }
+
+    /** Android 11+: ONE system delete request for the whole batch (no dialog when media management is allowed). */
+    private void requestDeleteApi30(List<VideoItem> batch) {
+        if (Build.VERSION.SDK_INT >= 30) {
+            List<Uri> uris = new ArrayList<>();
+            for (VideoItem v : batch) uris.add(mediaStoreUri(v));
+            try {
+                PendingIntent pi = MediaStore.createDeleteRequest(activity.getContentResolver(), uris);
+                deleteLauncher.launch(new IntentSenderRequest.Builder(pi.getIntentSender()).build());
+            } catch (RuntimeException e) {
+                toast("Couldn't remove the originals: " + e.getMessage());
+                keptCount += moved.size();
+                rollBackAll();
+                finishBatch();
+            }
+        }
     }
 
     /** Android 10 and older: delete one by one (Android 10 may ask per video). */

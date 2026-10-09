@@ -69,3 +69,13 @@ Previews/smoke test: `./gradlew testDebugUnitTest` (Robolectric, writes previews
 SHA-256 1f94113ddeec8369736e0c9825245411f0467c9c8f55214ba827694cca3509e4). Updates must use the same key.
 `app/build.gradle` reads the key from a properties file outside the repo (storeFile, storePassword, keyAlias, keyPassword)
 given with `-Pulfur.keystoreProperties=...` or `ULFUR_VIDEO_KEYSTORE_PROPERTIES`. Back that keystore up: without it no update can be installed in place.
+
+## v1.4.1 (versionCode 7): no delete pop-up with media management
+- Declares `android.permission.MANAGE_MEDIA` (Android 12+, "Media management apps" special access; the user grants it in Settings).
+- When `MediaStore.canManageMedia()` is true, Move to Private deletes the originals directly where MediaStore allows it, and sends the rest
+  through `createDeleteRequest`, which Android then approves without a dialog.
+- The first time a move would show Android's "Allow Ulfur Video to delete…" dialog (Android 12+, not granted), an Ulfur dialog offers
+  "Open settings" (`Settings.ACTION_REQUEST_MANAGE_MEDIA` for this package) / "Not now" with "Don't ask again" (`Prefs.mediaManagePromptOff`).
+  It is shown before anything is copied, at most once per app session. ⋮ › "Media management permission" opens it any time (ticked when granted).
+  Re-checked in onResume (snackbar when the state changes).
+- Not granted / Android 11: unchanged fallback, one system confirmation per batch. Android 10: per video. All-files access is not used.

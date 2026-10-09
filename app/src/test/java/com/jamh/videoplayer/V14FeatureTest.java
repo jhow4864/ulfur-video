@@ -236,4 +236,66 @@ public class V14FeatureTest {
         ctl.pause().stop().destroy();
         for (Vault.Entry e : list) Vault.thumbOf(app, e).delete();
     }
+
+    // ------------------------------------------------------------------ 1.4.1 media management
+
+    @Test
+    @Config(sdk = 34, qualifiers = "w411dp-h891dp-port-xxhdpi")
+    @SuppressWarnings("unchecked")
+    public void mediaManagementPromptOnceWithDontAskAgain() throws Exception {
+        MoveToPrivateFlow.resetSessionPromptForTest();
+        Prefs.setMediaManagePromptOff(app, false);
+        MediaAccess.overrideForTest = false;
+        List<VideoItem> vids = new PreviewScreenshotTest().fakeVideos();
+        ActivityController<MainActivity>[] c = new ActivityController[1];
+        MainActivity a = library(true, 0, vids, c);
+        assertFalse(MediaAccess.canManageMedia(a));
+        MoveToPrivateFlow flow = (MoveToPrivateFlow) field(a, "moveToPrivate");
+        assertTrue(flow.shouldOfferMediaManagement());
+        // Menu entry exists on Android 12+
+        MaterialToolbar tb = a.findViewById(R.id.toolbar);
+        assertTrue(tb.getMenu().findItem(R.id.action_media_manage).isVisible());
+
+        Bitmap base = renderToBitmap(a.getWindow().getDecorView(), 1080, 2340);
+        final boolean[] continued = {false};
+        AlertDialog d = flow.showMediaManagementPrompt(() -> continued[0] = true);
+        idle();
+        TextView msg = d.findViewById(android.R.id.message);
+        assertTrue(msg.getText().toString().contains("Allow media management so Android stops asking every time"));
+        assertEquals(a.getString(R.string.open_settings), d.getButton(DialogInterface.BUTTON_POSITIVE).getText().toString());
+        assertEquals(a.getString(R.string.not_now), d.getButton(DialogInterface.BUTTON_NEGATIVE).getText().toString());
+        View dv = d.getWindow().getDecorView();
+        int w = 1080 - 2 * 72;
+        dv.measure(View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(2340 - 60, View.MeasureSpec.AT_MOST));
+        dv.layout(0, 0, w, dv.getMeasuredHeight());
+        Canvas cv = new Canvas(base);
+        cv.drawColor(0x99000000);
+        cv.translate(72, (2340 - dv.getMeasuredHeight()) / 2f);
+        dv.draw(cv);
+        V13FeatureTest.write(base, "media_management_prompt.png");
+        // Once per session even without "Don't ask again"
+        assertFalse(flow.shouldOfferMediaManagement());
+        ((CheckBox) d.findViewById(R.id.dont_ask_again)).setChecked(true);
+        d.getButton(DialogInterface.BUTTON_NEGATIVE).performClick();
+        idle();
+        assertTrue("Not now continues the move", continued[0]);
+        assertTrue(Prefs.mediaManagePromptOff(app));
+        MoveToPrivateFlow.resetSessionPromptForTest();
+        assertFalse("Don't ask again is persisted", flow.shouldOfferMediaManagement());
+
+        // "Open settings" launches Settings.ACTION_REQUEST_MANAGE_MEDIA for our package
+        assertTrue(flow.openManageMediaSettings());
+        android.content.Intent next = shadowOf(a).getNextStartedActivity();
+        assertNotNull(next);
+        assertEquals(android.provider.Settings.ACTION_REQUEST_MANAGE_MEDIA, next.getAction());
+        assertEquals("package:" + a.getPackageName(), next.getData().toString());
+        // Granted: never offered, menu shows it ticked
+        MediaAccess.overrideForTest = true;
+        MoveToPrivateFlow.resetSessionPromptForTest();
+        Prefs.setMediaManagePromptOff(app, false);
+        assertFalse(flow.shouldOfferMediaManagement());
+        c[0].pause().stop().destroy();
+        MediaAccess.overrideForTest = null;
+    }
 }
