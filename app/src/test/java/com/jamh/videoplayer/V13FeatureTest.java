@@ -570,11 +570,12 @@ public class V13FeatureTest {
         assertTrue(await(() -> vu.equals(field(a, "currentUri")), 5000));
         assertTrue(a.isPrivatePlayback());
         assertTrue((a.getWindow().getAttributes().flags & android.view.WindowManager.LayoutParams.FLAG_SECURE) != 0);
-        assertEquals(View.GONE, a.findViewById(R.id.btn_pip).getVisibility());
+        // 1.6.0: PiP is allowed for private videos (FLAG_SECURE stays); resume points go to the
+        // separate private file, never to the gallery's (see V16ResumePipTest).
         Method save = PlayerActivity.class.getDeclaredMethod("saveResume");
         save.setAccessible(true);
         save.invoke(a);
-        assertNull("no resume point", Prefs.getResume(app, (String) field(a, "currentKey")));
+        assertNull("no gallery resume point", Prefs.getResume(app, (String) field(a, "currentKey")));
         idle();
         assertTrue("no Continue watching shortcut", ShortcutManagerCompat.getDynamicShortcuts(app).isEmpty());
 

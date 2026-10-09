@@ -816,7 +816,8 @@ public class PlayerActivity extends AppCompatActivity {
             }
         }
         long start = 0;
-        long[] resume = currentPrivate ? null : Prefs.getResume(this, key);
+        // 1.6.0: Private videos resume too (separate prefs file, excluded from backup).
+        long[] resume = currentPrivate ? PrivateResume.get(this, uri.getLastPathSegment()) : Prefs.getResume(this, key);
         if (resume != null && resume[0] > 3000 && (resume[1] <= 0 || resume[0] < resume[1] - 5000)) {
             start = resume[0];
         }
@@ -1657,7 +1658,7 @@ public class PlayerActivity extends AppCompatActivity {
         else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_SECURE);
         if (Build.VERSION.SDK_INT >= 33) setRecentsScreenshotEnabled(!on);
         View pip = findViewById(R.id.btn_pip);
-        if (pip != null) pip.setVisibility(pipSupported() && !on ? View.VISIBLE : View.GONE);
+        if (pip != null) pip.setVisibility(pipSupported() ? View.VISIBLE : View.GONE); // 1.6.0: private too
         updatePipParams();
     }
 
@@ -2431,16 +2432,19 @@ public class PlayerActivity extends AppCompatActivity {
 
     private void saveResume() {
         if (player == null || currentKey == null) return;
-        if (currentPrivate) return; // no resume points / recents for private videos
         if (player.isCurrentMediaItemLive()) return;
         long dur = player.getDuration();
         long pos = scrubbing ? scrubTarget : player.getCurrentPosition();
+        // Private videos: their own resume file, keyed by the vault entry (never in recents/shortcuts).
+        String privateKey = currentPrivate && currentUri != null ? currentUri.getLastPathSegment() : null;
         if (player.getPlaybackState() == Player.STATE_ENDED) {
-            Prefs.clearResume(this, currentKey);
+            if (currentPrivate) PrivateResume.clear(this, privateKey);
+            else Prefs.clearResume(this, currentKey);
             return;
         }
         if (player.getPlaybackState() == Player.STATE_IDLE && pos == 0) return;
-        Prefs.saveResume(this, currentKey, pos, dur == C.TIME_UNSET ? 0 : dur);
+        if (currentPrivate) PrivateResume.save(this, privateKey, pos, dur == C.TIME_UNSET ? 0 : dur);
+        else Prefs.saveResume(this, currentKey, pos, dur == C.TIME_UNSET ? 0 : dur);
     }
 
     // =================================================================== picture-in-picture
@@ -2456,7 +2460,9 @@ public class PlayerActivity extends AppCompatActivity {
 
     private void enterPip() {
         if (!pipSupported() || player == null) return;
-        if (currentPrivate) return; // the PiP window would show a private video outside the app
+        // 1.6.0: PiP works for Private videos too. FLAG_SECURE stays on (no screenshots or screen
+        // recording of the PiP window, blank in Recents) and Private stays unlocked only while the
+        // PiP window is open (closing it stops the activity, which re-locks).
         try {
             setControlsVisible(false);
             enterPictureInPictureMode(buildPipParams());
@@ -2493,7 +2499,7 @@ public class PlayerActivity extends AppCompatActivity {
             // playWhenReady (not isPlaying) so a rebuffer/seek in progress still auto-enters PiP.
             b.setAutoEnterEnabled(player != null && player.getPlayWhenReady()
                     && player.getPlaybackState() != Player.STATE_ENDED && !locked && !backgroundAudio
-                    && !currentPrivate);
+                    && !(currentPrivate && !VaultLock.isUnlocked()));
             b.setSeamlessResizeEnabled(true);
         }
         return b.build();
@@ -2538,7 +2544,8 @@ public class PlayerActivity extends AppCompatActivity {
         super.onUserLeaveHint();
         // Android 12+ uses setAutoEnterEnabled; older versions enter PiP manually.
         if (Build.VERSION.SDK_INT >= 26 && Build.VERSION.SDK_INT < 31
-                && player != null && player.isPlaying() && !locked && !backgroundAudio && !currentPrivate) {
+                && player != null && player.isPlaying() && !locked && !backgroundAudio
+                && !(currentPrivate && !VaultLock.isUnlocked())) {
             enterPip();
         }
     }

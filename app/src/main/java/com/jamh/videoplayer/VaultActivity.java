@@ -82,6 +82,11 @@ public class VaultActivity extends AppCompatActivity implements VaultMigration.L
     private LinearProgressIndicator migrationBar;
     private MaterialButton migrationRetry;
     private boolean migrationWasRunning;
+    // 1.6.0 Continue watching row
+    private final List<Vault.Entry> continueEntries = new ArrayList<>();
+    private View continueSection;
+    private RecyclerView continueList;
+    private ContinueAdapter continueAdapter;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -136,6 +141,12 @@ public class VaultActivity extends AppCompatActivity implements VaultMigration.L
         storageBar = findViewById(R.id.vault_storage_bar);
         unlockButton = findViewById(R.id.vault_unlock);
         list = findViewById(R.id.vault_list);
+        continueSection = findViewById(R.id.vault_continue_section);
+        continueList = findViewById(R.id.vault_continue);
+        continueList.setLayoutManager(new androidx.recyclerview.widget.LinearLayoutManager(this,
+                androidx.recyclerview.widget.LinearLayoutManager.HORIZONTAL, false));
+        continueAdapter = new ContinueAdapter();
+        continueList.setAdapter(continueAdapter);
         migrationCard = findViewById(R.id.vault_migration);
         migrationTitle = findViewById(R.id.vault_migration_title);
         migrationBody = findViewById(R.id.vault_migration_body);
@@ -234,6 +245,9 @@ public class VaultActivity extends AppCompatActivity implements VaultMigration.L
         content.setVisibility(View.GONE);
         entries.clear();
         adapter.notifyDataSetChanged();
+        continueEntries.clear();
+        if (continueAdapter != null) continueAdapter.notifyDataSetChanged();
+        if (continueSection != null) continueSection.setVisibility(View.GONE);
         thumbs.evictAll();
     }
 
@@ -304,6 +318,10 @@ public class VaultActivity extends AppCompatActivity implements VaultMigration.L
         updateSelectionUi();
         emptyView.setVisibility(l.isEmpty() ? View.VISIBLE : View.GONE);
         storageText.setText(storageLabel(l.size(), used, free));
+        continueEntries.clear();
+        continueEntries.addAll(PrivateResume.continueWatching(this, l, 10));
+        continueAdapter.notifyDataSetChanged();
+        updateContinueVisibility();
         long total = used + free;
         storageBar.setProgress(total <= 0 ? 0 : (int) Math.max(used > 0 ? 8 : 0, 1000 * used / total));
     }
@@ -332,6 +350,16 @@ public class VaultActivity extends AppCompatActivity implements VaultMigration.L
         if (toolbar.getNavigationIcon() != null) toolbar.getNavigationIcon().setTint(0xFFF2F2F7);
         adapter.notifyDataSetChanged();
         updateSelectionUi();
+        updateContinueVisibility();
+    }
+
+    private void updateContinueVisibility() {
+        continueSection.setVisibility(!selecting && !continueEntries.isEmpty() ? View.VISIBLE : View.GONE);
+    }
+
+    @VisibleForTesting
+    List<Vault.Entry> continueWatching() {
+        return continueEntries;
     }
 
     @VisibleForTesting
@@ -521,6 +549,68 @@ public class VaultActivity extends AppCompatActivity implements VaultMigration.L
         @Override
         public int getItemCount() {
             return entries.size();
+        }
+    }
+
+    /** Bitmap for an entry: memory cache, else decrypted on the io thread. */
+    private void loadThumbInto(Vault.Entry e, ImageView view, java.util.function.Supplier<String> boundId) {
+        Bitmap cached = thumbs.get(e.id);
+        view.setImageBitmap(cached);
+        if (cached != null) return;
+        final android.content.Context app = getApplicationContext();
+        io.execute(() -> {
+            Bitmap b = Vault.loadThumb(app, e);
+            if (b == null) return;
+            handler.post(() -> {
+                if (!VaultLock.isUnlocked()) return;
+                thumbs.put(e.id, b);
+                if (e.id.equals(boundId.get())) view.setImageBitmap(b);
+            });
+        });
+    }
+
+    private final class ContinueAdapter extends RecyclerView.Adapter<ContinueHolder> {
+        @NonNull
+        @Override
+        public ContinueHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
+            return new ContinueHolder(LayoutInflater.from(parent.getContext()).inflate(R.layout.item_continue, parent, false));
+        }
+
+        @Override
+        public void onBindViewHolder(@NonNull ContinueHolder h, int position) {
+            Vault.Entry e = continueEntries.get(position);
+            h.title.setText(e.name);
+            long[] r = PrivateResume.get(VaultActivity.this, e.file);
+            long dur = r != null && r[1] > 0 ? r[1] : e.durationMs;
+            long pos = r == null ? 0 : r[0];
+            h.progress.setProgress(dur > 0 ? (int) (1000 * pos / dur) : 0);
+            h.duration.setText(dur > 0 ? Fmt.time(Math.max(0, dur - pos)) + " left" : "");
+            h.duration.setVisibility(dur > 0 ? View.VISIBLE : View.GONE);
+            h.itemView.setOnClickListener(x -> play(e));
+            h.boundId = e.id;
+            loadThumbInto(e, h.thumb, () -> h.boundId);
+        }
+
+        @Override
+        public int getItemCount() {
+            return continueEntries.size();
+        }
+    }
+
+    private static final class ContinueHolder extends RecyclerView.ViewHolder {
+        final ImageView thumb;
+        final TextView title, duration;
+        final android.widget.ProgressBar progress;
+        String boundId;
+
+        ContinueHolder(View v) {
+            super(v);
+            View frame = v.findViewById(R.id.thumb_frame);
+            if (frame != null) frame.setClipToOutline(true);
+            thumb = v.findViewById(R.id.thumb);
+            title = v.findViewById(R.id.title);
+            duration = v.findViewById(R.id.duration);
+            progress = v.findViewById(R.id.resume_progress);
         }
     }
 

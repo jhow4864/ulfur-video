@@ -27,6 +27,7 @@
     <string name="vault_warning">Private videos are encrypted and stored only inside Ulfur Video on this phone. They aren\'t in your phone\'s backups. Uninstalling the app or clearing its storage permanently deletes them. Move them out before you uninstall or switch phones.</string>
     <string name="vault_migration_retry">Try again</string>
     <string name="undo">Undo</string>
+    <string name="continue_watching">Continue watching</string>
     <string name="trash_title">Trash</string>
     <string name="trash_private_title">Private trash</string>
     <string name="trash_empty">Trash is empty</string>

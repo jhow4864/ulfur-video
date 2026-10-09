@@ -4,4 +4,5 @@
     <exclude domain="file" path="vault/"/>
     <!-- 1.6.0: the vault keyset is wrapped by a Keystore key that never leaves this phone -->
     <exclude domain="sharedpref" path="ulfur_vault_keyset.xml"/>
+    <exclude domain="sharedpref" path="private_resume.xml"/>
 </full-backup-content>
