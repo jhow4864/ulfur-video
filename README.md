@@ -194,3 +194,41 @@ The Off / Balanced / Sharp control and the HD✦ button are unchanged; only what
   `tools/upscale-compare/render18.py` + `compose18.py` (Mesa llvmpipe).
 - Tests: `V18UpscaleTest` (routing, Off/Balanced unchanged, Sharp guard + session fallback in the player,
   HDR bypass, shader/pipeline sampler consistency, export sizes/estimates, editor availability).
+
+## v1.9.0 (versionCode 14): Find duplicates
+
+Library ⋮ → **Find duplicates…** (`DuplicatesActivity`, engine in `DuplicateFinder` / `DuplicateScan`).
+
+- **Exact copies** (byte-identical), cheapest check first: group by file size (free, from MediaStore /
+  the Private index) → partial hash of only the same-size videos (SHA-256 of size + first and last
+  64 KiB, the existing `VideoKey`; ≤ 128 KiB read per file) → full SHA-256 only for partial-hash
+  collisions, to confirm. Private videos reuse the plaintext SHA-256 and key already stored in their
+  encrypted index, so they are usually not decrypted at all.
+- **Look-alikes** (re-encodes, other resolutions, re-downloads): same duration ±1 s (sorted sliding
+  window, no all-pairs compare) and a 64-bit dHash of the keyframe nearest 10 %, 50 % and 90 %
+  (`MediaMetadataRetriever` `OPTION_CLOSEST_SYNC`, scaled to 64 px, then 9×8 luma). Frames are only
+  decoded for videos that have a duration neighbour. A pair matches when at least two frames are
+  informative in both (flat/black frames are ignored, so shared black intros don't match) and each
+  differs by ≤ 10 of 64 bits. Videos under 2 s are exact-matched only.
+- Groups are connected components of both relations ("Exact copies" or "Look alike"), biggest
+  reclaimable size first. **Suggested keeper**: highest resolution, then largest file, then oldest
+  (shown with a KEEP badge and the reason). The other copies start ticked; the user changes the ticks
+  (per-group "Suggest", ⋮ Tick all suggestions / Untick all).
+- **Never auto-deletes**: removal only after Move to Trash + a confirmation; a group with every copy
+  ticked is refused ("Keep at least one copy"). Library videos go through the existing
+  `DeleteVideosFlow` (Android 11+ system Trash, auto-approved with media management; Android 10 and
+  older: its permanent-delete confirmation); Private videos go to the encrypted Private trash. One
+  combined "Deleted N · Undo" restores both. If Android's prompt is declined, nothing is touched.
+- **Include Private videos** (optional): asks for the fingerprint/screen lock when Private is locked;
+  the screen is FLAG_SECURE while Private videos may be shown, and Private results disappear when
+  Private locks again.
+- **Background + cache**: one app-wide scan on a low-priority worker thread with phase progress
+  ("Comparing pictures · 12 of 40") and Cancel; it keeps running if the screen is closed or rotated
+  (not across process death). Hashes are cached in `files/dupes/hashes.tsv` (app-private), keyed by
+  MediaStore id and invalidated by size/date/duration/name; gone videos are pruned; a cancelled scan
+  keeps what it already read. Hashes of Private videos are kept in memory only.
+- Tests: `V19DuplicateTest` (cheap-first ordering, unreadable files, ±1 s window, flat frames, merge of
+  exact + look-alike, keeper order, dHash robustness across resolutions, cache reuse/invalidation/
+  pruning and no Private hashes on disk, cancel, real hashing of a library file vs its Private copy,
+  the screen: suggestions, last-copy guard, combined Trash + Undo, declined prompt, locking Private).
+  Preview: `previews/v19_duplicates.png`.

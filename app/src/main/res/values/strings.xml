@@ -101,4 +101,15 @@
     <string name="gesture_menu_skip">Double-tap skip</string>
     <string name="gesture_skip_value">%1$d seconds</string>
     <string name="cast_connected_tap">Connected to %1$s · tap to play this video there</string>
+    <!-- 1.9.0 duplicate finder -->
+    <string name="dupes_title">Find duplicates</string>
+    <string name="dupes_menu">Find duplicates…</string>
+    <string name="dupes_intro">Finds identical copies (same file contents) and look-alikes (same length, same pictures, e.g. a re-encode or another resolution). Nothing is deleted unless you tick it.</string>
+    <string name="dupes_include_private">Include Private videos</string>
+    <string name="dupes_scan">Scan library</string>
+    <string name="dupes_scan_again">Scan again</string>
+    <string name="dupes_move_to_trash">Move to Trash</string>
+    <string name="dupes_use_suggestion">Suggest</string>
+    <string name="dupes_keep_badge">KEEP</string>
+    <string name="dupes_none">No duplicates found</string>
 </resources>

@@ -161,6 +161,13 @@
             android:label="@string/trash_title"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|uiMode"/>
 
+        <!-- 1.9.0: ⋮ → Find duplicates -->
+        <activity
+            android:name=".DuplicatesActivity"
+            android:exported="false"
+            android:label="@string/dupes_title"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|uiMode"/>
+
         <service
             android:name=".PlaybackService"
             android:exported="true"

@@ -828,6 +828,9 @@ public class MainActivity extends AppCompatActivity implements LibraryAdapter.Li
         } else if (id == R.id.action_trash) {
             startActivity(TrashActivity.intent(this, false));
             return true;
+        } else if (id == R.id.action_duplicates) {
+            startActivity(new Intent(this, DuplicatesActivity.class));
+            return true;
         } else if (id == R.id.action_refresh) {
             refresh();
             return true;

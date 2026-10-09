@@ -119,6 +119,13 @@ final class DeleteVideosFlow {
         });
     }
 
+    /** 1.9.0: false = the caller shows its own combined "Deleted N · Undo" (duplicates screen). */
+    private boolean ownUndoBar = true;
+
+    void setOwnUndoBar(boolean own) {
+        ownUndoBar = own;
+    }
+
     boolean isBusy() {
         return busy;
     }
@@ -368,7 +375,8 @@ final class DeleteVideosFlow {
         }
         if (sb.length() == 0) sb.append("Nothing was deleted");
         if (trashed && !result.isEmpty()) {
-            showUndo(result, failedCount);
+            if (ownUndoBar) showUndo(result, failedCount);
+            else if (failedCount > 0) toast(sb.toString());
         } else {
             toast(sb.toString());
         }
