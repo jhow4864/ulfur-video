@@ -79,3 +79,10 @@ given with `-Pulfur.keystoreProperties=...` or `ULFUR_VIDEO_KEYSTORE_PROPERTIES`
   It is shown before anything is copied, at most once per app session. ⋮ › "Media management permission" opens it any time (ticked when granted).
   Re-checked in onResume (snackbar when the state changes).
 - Not granted / Android 11: unchanged fallback, one system confirmation per batch. Android 10: per video. All-files access is not used.
+
+## v1.4.2 (versionCode 8): instant seeking
+
+- Seek-bar release/tap no longer issues a second frame-exact (EXACT) seek after the keyframe preview seek; it lands on the keyframe that was previewed. Exact seeks are kept for the fine (0.1 s) scrub zone.
+- Local playback resumes after 250 ms buffered (500 ms after a rebuffer) instead of 1.5 s / 3 s; streaming keeps the old values.
+- The background scrub-thumbnail sweep pauses for 4 s after any seek/skip/rebuffer so it doesn't compete with the player for the decoder and disk.
+- Private (vault) videos are plain files served through FileProvider and are seekable (lseek), so they were not the cause.

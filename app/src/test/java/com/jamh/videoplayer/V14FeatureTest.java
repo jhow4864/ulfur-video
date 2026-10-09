@@ -298,4 +298,25 @@ public class V14FeatureTest {
         c[0].pause().stop().destroy();
         MediaAccess.overrideForTest = null;
     }
+
+    // ------------------------------------------------------------------ 1.4.2 seeking
+
+    @Test
+    public void scrubReleaseDoesNotDoubleSeek() {
+        // Tap / drag that ended where the last preview (keyframe) seek went: no second, EXACT seek.
+        assertEquals(PlayerActivity.RELEASE_NONE, PlayerActivity.releaseSeekMode(false, 600_000, 600_000));
+        // Finger moved after the last throttled preview seek: one keyframe seek, still not EXACT.
+        assertEquals(PlayerActivity.RELEASE_SNAP, PlayerActivity.releaseSeekMode(false, 590_000, 600_000));
+        assertEquals(PlayerActivity.RELEASE_SNAP, PlayerActivity.releaseSeekMode(false, -1, 600_000));
+        // Fine (0.1 s) scrubbing stays frame-exact.
+        assertEquals(PlayerActivity.RELEASE_EXACT, PlayerActivity.releaseSeekMode(true, 600_000, 600_000));
+    }
+
+    @Test
+    public void localPlaybackRestartsQuicklyAfterSeek() {
+        assertTrue(PlayerFactory.LOCAL_BUFFER_FOR_PLAYBACK_MS <= 250);
+        assertTrue(PlayerFactory.LOCAL_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS <= 500);
+        // Streams keep the safer pre-roll.
+        assertEquals(1_500, PlayerFactory.BUFFER_FOR_PLAYBACK_MS);
+    }
 }

@@ -76,6 +76,8 @@ final class ScrubThumbnails {
 
     private final Object lock = new Object();
     private boolean cancelled;
+    /** 1.4.2: the background sweep stays off until this uptime (set after seeks and while the player buffers). */
+    private long holdUntil;
     private boolean scrubbing;
     private boolean unavailable;
     private int demandIndex = -1;
@@ -225,6 +227,17 @@ final class ScrubThumbnails {
     }
 
     /** While true the background sweep pauses (on-demand gap filling continues). */
+    /**
+     * 1.4.2: keeps the background sweep (MediaMetadataRetriever: its own decoder + disk reads) out of the way for
+     * {@code ms} so a seek gets the decoder and storage to itself. On-demand frames while scrubbing still work.
+     */
+    void holdOff(long ms) {
+        synchronized (lock) {
+            holdUntil = Math.max(holdUntil, SystemClock.uptimeMillis() + ms);
+            lock.notifyAll();
+        }
+    }
+
     void setScrubbing(boolean on) {
         synchronized (lock) {
             scrubbing = on;
@@ -325,6 +338,10 @@ final class ScrubThumbnails {
                         }
                         if (now < startAt) {
                             waitQuietly(startAt - now);
+                            continue;
+                        }
+                        if (!scrubbing && now < holdUntil) {
+                            waitQuietly(holdUntil - now);
                             continue;
                         }
                         if (!scrubbing) {

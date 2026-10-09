@@ -43,6 +43,12 @@ public final class PlayerFactory {
     static final int BUFFER_FOR_PLAYBACK_MS = 1_500;
     static final int BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS = 3_000;
     static final int BACK_BUFFER_MS = 30_000;
+    /**
+     * 1.4.2: local files (gallery and private videos) are read from flash at hundreds of MB/s, so there is no need
+     * to buffer 1.5 s / 3 s of media before playing after a seek. Playback restarts as soon as 0.25 s / 0.5 s is ready.
+     */
+    static final int LOCAL_BUFFER_FOR_PLAYBACK_MS = 250;
+    static final int LOCAL_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS = 500;
 
     /**
      * Local-playback buffer tiers, chosen from the file's bitrate so that forward + back buffer
@@ -89,7 +95,7 @@ public final class PlayerFactory {
                 .setBufferDurationsMsForStreaming(MIN_BUFFER_MS, MAX_BUFFER_MS,
                         BUFFER_FOR_PLAYBACK_MS, BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS)
                 .setBufferDurationsMsForLocalPlayback(t[0], t[1],
-                        BUFFER_FOR_PLAYBACK_MS, BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS)
+                        LOCAL_BUFFER_FOR_PLAYBACK_MS, LOCAL_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS)
                 .setPrioritizeTimeOverSizeThresholdsForStreaming(true)
                 // Local: the byte cap always wins, so a mis-probed or unknown bitrate can never
                 // fill the heap (the back buffer counts toward the cap as well).
@@ -131,7 +137,7 @@ public final class PlayerFactory {
                 .setMediaCodecSelector(codecSelector(preferSoftwareVideo));
 
         DefaultHttpDataSource.Factory http = new DefaultHttpDataSource.Factory()
-                .setUserAgent("UlfurVideo/1.4 (Android) Media3")
+                .setUserAgent("UlfurVideo/1.4.2 (Android) Media3")
                 .setAllowCrossProtocolRedirects(true)
                 .setConnectTimeoutMs(15_000)
                 .setReadTimeoutMs(20_000);

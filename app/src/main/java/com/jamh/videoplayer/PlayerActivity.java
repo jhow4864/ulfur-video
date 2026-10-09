@@ -100,6 +100,8 @@ public class PlayerActivity extends AppCompatActivity {
     private static final long SKIP_MS = 10_000;
     /** Keyframe-snapping window for double-tap skips (fast, but never moves the wrong way). */
     private static final long SKIP_SNAP_TOLERANCE_US = 4_000_000;
+    /** 1.4.2: how long the thumbnail sweep stays paused after a seek so the seek isn't competing for the decoder. */
+    private static final long SEEK_THUMB_HOLDOFF_MS = 4_000;
     private static final long SCRUB_THROTTLE_MS = 80;
     private static final long FINE_SCRUB_THROTTLE_MS = 120;
     private static final int SCRUB_NORMAL = 0, SCRUB_HALF = 1, SCRUB_FINE = 2;
@@ -200,6 +202,8 @@ public class PlayerActivity extends AppCompatActivity {
     private boolean scrubbing;
     private long scrubTarget;
     private long lastScrubSeekAt;
+    /** 1.4.2: target of the last keyframe seek issued during the current scrub (-1 = none yet). */
+    private long lastScrubSeekTarget = -1;
 
     // Diagnostics
     private String videoDecoderName = "-";
@@ -885,6 +889,7 @@ public class PlayerActivity extends AppCompatActivity {
 
         @Override
         public void onPlaybackStateChanged(int state) {
+            if (state == Player.STATE_BUFFERING && thumbs != null) thumbs.holdOff(SEEK_THUMB_HOLDOFF_MS);
             if (state == Player.STATE_BUFFERING && !scrubbing) {
                 // Only show the spinner if buffering lasts longer than ~500 ms.
                 handler.removeCallbacks(showSpinnerRunnable);
@@ -1003,9 +1008,19 @@ public class PlayerActivity extends AppCompatActivity {
         if (dur != C.TIME_UNSET) target = Math.min(target, Math.max(0, dur - 500));
         target = Math.max(0, target);
         player.setSeekParameters(new SeekParameters(SKIP_SNAP_TOLERANCE_US, SKIP_SNAP_TOLERANCE_US));
+        if (thumbs != null) thumbs.holdOff(SEEK_THUMB_HOLDOFF_MS);
         player.seekTo(target);
         player.setSeekParameters(SeekParameters.EXACT); // queued after the seek on the playback thread
         updateProgressUi(target);
+    }
+
+    static final int RELEASE_NONE = 0, RELEASE_SNAP = 1, RELEASE_EXACT = 2;
+
+    /** What to do when a scrub ends (pure, unit-tested). */
+    static int releaseSeekMode(boolean fine, long lastPreviewSeekTarget, long finalTarget) {
+        if (fine) return RELEASE_EXACT;
+        if (lastPreviewSeekTarget == finalTarget) return RELEASE_NONE;
+        return RELEASE_SNAP;
     }
 
     /** Starts a scrub: enables Media3 scrubbing mode and keyframe (CLOSEST_SYNC) seeks. */
@@ -1014,6 +1029,7 @@ public class PlayerActivity extends AppCompatActivity {
         scrubbing = true;
         scrubTarget = player.getCurrentPosition();
         lastScrubSeekAt = 0;
+        lastScrubSeekTarget = -1;
         handler.removeCallbacks(hideControlsRunnable);
         handler.removeCallbacks(showSpinnerRunnable);
         spinner.setVisibility(View.GONE);
@@ -1056,18 +1072,37 @@ public class PlayerActivity extends AppCompatActivity {
     private void performScrubSeek() {
         if (!scrubbing || player == null) return;
         lastScrubSeekAt = SystemClock.uptimeMillis();
+        lastScrubSeekTarget = scrubTarget;
         player.seekTo(scrubTarget);
     }
 
-    /** Ends a scrub with a single exact seek to the final position. */
+    /**
+     * Ends a scrub. 1.4.2: lands on the keyframe the preview already showed instead of a second, EXACT seek.
+     * Before, every release (and every tap on the seek bar) did a keyframe seek and then an EXACT one, and the
+     * EXACT one decodes every frame from the previous keyframe up to the target before playing, which takes
+     * seconds on long-GOP files (movies, screen recordings, 4K/HEVC). Fine (0.1 s) scrubbing stays exact.
+     */
     private void endScrub() {
         if (!scrubbing) return;
         scrubbing = false;
         handler.removeCallbacks(scrubSeekRunnable);
         if (player != null) {
             player.setScrubbingModeEnabled(false);
-            fastSeekExact(scrubTarget);
+            if (thumbs != null) thumbs.holdOff(SEEK_THUMB_HOLDOFF_MS);
+            int mode = releaseSeekMode(scrubZone == SCRUB_FINE, lastScrubSeekTarget, scrubTarget);
+            if (mode == RELEASE_EXACT) {
+                fastSeekExact(scrubTarget);
+            } else if (mode == RELEASE_SNAP) {
+                // The finger moved after the last preview seek: one keyframe seek to the final spot.
+                player.setSeekParameters(SeekParameters.CLOSEST_SYNC);
+                player.seekTo(scrubTarget);
+                player.setSeekParameters(SeekParameters.EXACT);   // queued after the seek
+            } else {
+                // Already at the previewed keyframe: no second seek, just restore exact seeks for later.
+                player.setSeekParameters(SeekParameters.EXACT);
+            }
         }
+        lastScrubSeekTarget = -1;
         handler.postDelayed(hideSeekInfo, 400);
         hideScrubPreview();
         scheduleHide();
