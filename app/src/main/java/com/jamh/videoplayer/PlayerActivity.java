@@ -242,6 +242,18 @@ public class PlayerActivity extends AppCompatActivity {
     private boolean videoDisabledForBackground;
     private TextView badgeNight, badgeSleep;
 
+    // 1.6 bookmarks / remembered speed / subtitles (stable per-video key: VideoKey)
+    /** Content fingerprint of the current video (null until computed on the io thread). */
+    @androidx.annotation.Nullable private String videoKey;
+    private BookmarkStore bookmarkStore;
+    private BookmarkTicksView bookmarkTicks;
+    /** The user picked a speed for this video, so a late remembered speed must not override it. */
+    private boolean speedChosenForVideo;
+    /** Keep the restored speed once (process death) instead of resetting it in startMedia. */
+    private boolean keepSpeedOnce;
+    /** Bookmark seeks use the 1.4.2 instant (keyframe) path. */
+    static final SeekParameters BOOKMARK_SEEK = SeekParameters.CLOSEST_SYNC;
+
     // Precision scrubbing
     private int scrubZone = SCRUB_NORMAL;
     private float scrubAccumMs;
@@ -326,8 +338,10 @@ public class PlayerActivity extends AppCompatActivity {
         if (playerView.getSubtitleView() != null) {
             playerView.getSubtitleView().setStyle(new CaptionStyleCompat(0xFFFFFFFF, 0x00000000,
                     0x00000000, CaptionStyleCompat.EDGE_TYPE_OUTLINE, 0xFF000000, null));
-            playerView.getSubtitleView().setFractionalTextSize(0.0533f * 1.1f);
+            playerView.getSubtitleView().setFractionalTextSize(
+                    PlaybackMemory.subtitleFraction(PlaybackMemory.subtitleSize(this)));
         }
+        bookmarkStore = new BookmarkStore(this);
 
         setupControls();
         setupGestures();
@@ -364,6 +378,7 @@ public class PlayerActivity extends AppCompatActivity {
             if (vid >= 0) toHandle.putExtra(EXTRA_VIDEO_ID, vid);
             toHandle.putExtra(EXTRA_SORT, getIntent().getIntExtra(EXTRA_SORT, Sort.NAME));
             speed = savedInstanceState.getFloat("speed", 1f);
+            keepSpeedOnce = true;
             aspectMode = savedInstanceState.getInt("aspect", 0);
             btnSpeed.setText(formatSpeed(speed));
         }
@@ -543,6 +558,8 @@ public class PlayerActivity extends AppCompatActivity {
         badgeNight = findViewById(R.id.badge_night);
         badgeSleep = findViewById(R.id.badge_sleep);
         aspectLabel = findViewById(R.id.aspect_label);
+        bookmarkTicks = findViewById(R.id.bookmark_ticks);
+        bookmarkTicks.attachTo(seekBar);
     }
 
     // =================================================================== intent / playlist
@@ -815,6 +832,7 @@ public class PlayerActivity extends AppCompatActivity {
                 profileRebuildPending = true;
             }
         }
+        prepareVideoMemory(uri, title);
         long start = 0;
         // 1.6.0: Private videos resume too (separate prefs file, excluded from backup).
         long[] resume = currentPrivate ? PrivateResume.get(this, uri.getLastPathSegment()) : Prefs.getResume(this, key);
@@ -899,6 +917,10 @@ public class PlayerActivity extends AppCompatActivity {
         createSession();
         player.addAnalyticsListener(analyticsListener);
         player.setPlaybackSpeed(speed);
+        if (!PlaybackMemory.subtitlesOn(this)) {
+            player.setTrackSelectionParameters(player.getTrackSelectionParameters().buildUpon()
+                    .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true).build());
+        }
         playerView.setPlayer(player);
         applyAspect(false);
     }
@@ -1192,7 +1214,10 @@ public class PlayerActivity extends AppCompatActivity {
         btnNext.setOnClickListener(v -> playIndex(playlistIndex + 1));
         btnSpeed.setOnClickListener(v -> showSpeedDialog());
         findViewById(R.id.btn_audio).setOnClickListener(v -> showTrackDialog(C.TRACK_TYPE_AUDIO));
-        findViewById(R.id.btn_subs).setOnClickListener(v -> showTrackDialog(C.TRACK_TYPE_TEXT));
+        findViewById(R.id.btn_subs).setOnClickListener(v -> showSubtitlesSheet());
+        View btnBookmark = findViewById(R.id.btn_bookmark);
+        btnBookmark.setOnClickListener(v -> { addBookmarkHere(); scheduleHide(); });
+        btnBookmark.setOnLongClickListener(v -> { showBookmarksSheet(); return true; });
         View pip = findViewById(R.id.btn_pip);
         pip.setOnClickListener(v -> enterPip());
         pip.setVisibility(pipSupported() ? View.VISIBLE : View.GONE);
@@ -1286,6 +1311,7 @@ public class PlayerActivity extends AppCompatActivity {
             if (seekBar.getMax() != max) seekBar.setMax(max);
             durationView.setText(Fmt.time(dur));
             seekBar.setEnabled(player.isCurrentMediaItemSeekable());
+            bookmarkTicks.setDuration(dur);
         } else {
             durationView.setText(player.isCurrentMediaItemLive() ? "LIVE" : "--:--");
         }
@@ -1822,11 +1848,11 @@ public class PlayerActivity extends AppCompatActivity {
         new MaterialAlertDialogBuilder(this)
                 .setTitle("Playback speed")
                 .setSingleChoiceItems(labels, checked, (d, which) -> {
-                    speed = SPEEDS[which];
-                    if (player != null) player.setPlaybackSpeed(speed);
-                    btnSpeed.setText(formatSpeed(speed));
+                    setSpeedForVideo(SPEEDS[which]);
                     d.dismiss();
                 })
+                .setNeutralButton("Default: " + formatSpeed(PlaybackMemory.defaultSpeed(this)) + "…",
+                        (d, w) -> showDefaultSpeedDialog())
                 .setOnDismissListener(d -> hideSystemUi())
                 .show();
     }
@@ -1902,6 +1928,7 @@ public class PlayerActivity extends AppCompatActivity {
         // (persisting it every time would pile up grants toward the per-app limit).
         externalSubUri = uri;
         externalSubName = VideoRepository.displayName(this, uri);
+        PlaybackMemory.setSubtitlesOn(this, true);
         long pos = player.getCurrentPosition();
         boolean pwr = player.getPlayWhenReady();
         player.setTrackSelectionParameters(player.getTrackSelectionParameters().buildUpon()
@@ -1912,6 +1939,220 @@ public class PlayerActivity extends AppCompatActivity {
         player.prepare();
         player.setPlayWhenReady(pwr);
         Toast.makeText(this, "Subtitles: " + externalSubName, Toast.LENGTH_SHORT).show();
+    }
+
+    // =================================================================== 1.6 bookmarks / speed / subtitles
+
+    /**
+     * Called by startMedia: resets the per-video state, then resolves the video's stable key
+     * ({@link VideoKey}: content fingerprint, same in and out of Private) and, if enabled, a
+     * same-name .srt/.vtt next to it, off the main thread.
+     */
+    private void prepareVideoMemory(Uri uri, String title) {
+        videoKey = null;
+        bookmarkTicks.setBookmarks(new long[0], 0);
+        if (keepSpeedOnce) {
+            keepSpeedOnce = false;
+            speedChosenForVideo = true;
+        } else {
+            speedChosenForVideo = false;
+            applySpeed(PlaybackMemory.defaultSpeed(this));
+        }
+        final VideoItem item = playlistIndex >= 0 && playlistIndex < playlist.size()
+                && uri.equals(playlist.get(playlistIndex).uri) ? playlist.get(playlistIndex) : null;
+        final long size = item != null ? item.sizeBytes : -1;
+        final long dur = item != null ? item.durationMs : -1;
+        final String name = item != null ? item.displayName : null;
+        final boolean findSubs = externalSubUri == null && !currentPrivate && PlaybackMemory.autoLoadSubtitles(this);
+        final Context app = getApplicationContext();
+        io.execute(() -> {
+            String key = VideoKey.of(app, uri, size, dur, name != null ? name : title);
+            SubtitleFinder.Found sub = findSubs ? SubtitleFinder.find(app, uri, name) : null;
+            handler.post(() -> {
+                if (isDestroyed() || !uri.equals(currentUri)) return;
+                onVideoKeyReady(key);
+                if (sub != null && externalSubUri == null) loadAutoSubtitle(sub.uri, sub.name);
+            });
+        });
+    }
+
+    private void onVideoKeyReady(@androidx.annotation.Nullable String key) {
+        videoKey = key;
+        if (speedChosenForVideo) {
+            PlaybackMemory.setVideoSpeed(this, key, speed); // chosen before the key was known
+        } else {
+            float s = PlaybackMemory.startSpeed(this, key);
+            if (Math.abs(s - speed) > 0.001f) applySpeed(s);
+        }
+        refreshBookmarkTicks();
+    }
+
+    private void applySpeed(float s) {
+        speed = PlaybackMemory.sanitizeSpeed(s);
+        if (player != null) player.setPlaybackSpeed(speed);
+        btnSpeed.setText(formatSpeed(speed));
+    }
+
+    /** Speed picked in the player: used now and remembered for this video. */
+    private void setSpeedForVideo(float s) {
+        applySpeed(s);
+        speedChosenForVideo = true;
+        PlaybackMemory.setVideoSpeed(this, videoKey, speed);
+    }
+
+    private void showDefaultSpeedDialog() {
+        float def = PlaybackMemory.defaultSpeed(this);
+        String[] labels = new String[SPEEDS.length];
+        int checked = 2;
+        for (int i = 0; i < SPEEDS.length; i++) {
+            labels[i] = formatSpeed(SPEEDS[i]);
+            if (Math.abs(SPEEDS[i] - def) < 0.01f) checked = i;
+        }
+        new MaterialAlertDialogBuilder(this)
+                .setTitle("Default speed for all videos")
+                .setSingleChoiceItems(labels, checked, (d, which) -> {
+                    boolean followsDefault = PlaybackMemory.videoSpeed(this, videoKey) == null
+                            && Math.abs(speed - PlaybackMemory.defaultSpeed(this)) < 0.001f;
+                    PlaybackMemory.setDefaultSpeed(this, SPEEDS[which]);
+                    if (followsDefault) applySpeed(SPEEDS[which]);
+                    Toast.makeText(this, "Default speed " + formatSpeed(SPEEDS[which])
+                            + ". Videos with their own speed keep it", Toast.LENGTH_SHORT).show();
+                    d.dismiss();
+                })
+                .setOnDismissListener(d -> hideSystemUi())
+                .show();
+    }
+
+    private void refreshBookmarkTicks() {
+        List<BookmarkStore.Bookmark> l = bookmarkStore.list(videoKey);
+        long[] t = new long[l.size()];
+        for (int i = 0; i < t.length; i++) t[i] = l.get(i).timeMs;
+        long dur = player == null ? 0 : player.getDuration();
+        bookmarkTicks.setBookmarks(t, dur == C.TIME_UNSET ? 0 : dur);
+    }
+
+    /** Bookmark button: saves the current position (name it from the snackbar). */
+    void addBookmarkHere() {
+        if (player == null || currentUri == null) return;
+        final long pos = player.getCurrentPosition();
+        if (videoKey == null) {
+            // Key still being computed on the io thread: queue behind it.
+            final Uri u = currentUri;
+            io.execute(() -> handler.post(() -> {
+                if (u.equals(currentUri) && videoKey != null) addBookmarkAt(pos);
+            }));
+            return;
+        }
+        addBookmarkAt(pos);
+    }
+
+    private void addBookmarkAt(long pos) {
+        int before = bookmarkStore.list(videoKey).size();
+        BookmarkStore.Bookmark b = bookmarkStore.add(videoKey, pos, null);
+        if (b == null) {
+            Toast.makeText(this, "Couldn't add a bookmark here", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        refreshBookmarkTicks();
+        final String key = videoKey;
+        boolean added = bookmarkStore.list(videoKey).size() > before;
+        Snackbar.make(root, (added ? "Bookmarked " : "Already bookmarked ") + Fmt.time(b.timeMs), Snackbar.LENGTH_LONG)
+                .setAction(b.name.isEmpty() ? "Name" : "Rename", v -> BookmarksSheet.showNameDialog(this,
+                        "Name bookmark", b.name, Fmt.time(b.timeMs), n -> {
+                            bookmarkStore.rename(key, b.id, n);
+                            hideSystemUi();
+                        }))
+                .show();
+    }
+
+    /** Jumps to a bookmark with the 1.4.2 instant (keyframe, CLOSEST_SYNC) seek. */
+    void jumpToBookmark(long positionMs) {
+        if (player == null) return;
+        if (thumbs != null) thumbs.holdOff(SEEK_THUMB_HOLDOFF_MS);
+        long target = Math.max(0, positionMs);
+        player.setSeekParameters(BOOKMARK_SEEK);
+        player.seekTo(target);
+        player.setSeekParameters(SeekParameters.EXACT); // queued after the seek
+        updateProgressUi(target);
+        showSeekInfo(target, null, null);
+        handler.postDelayed(hideSeekInfo, 900);
+        showControls();
+    }
+
+    private void showBookmarksSheet() {
+        handler.removeCallbacks(hideControlsRunnable);
+        BottomSheetDialog sheet = new BottomSheetDialog(this);
+        View v = getLayoutInflater().inflate(R.layout.sheet_bookmarks, null);
+        sheet.setContentView(v);
+        bindBookmarksSheet(v, sheet);
+        sheet.setOnShowListener(d -> sheet.getBehavior().setSkipCollapsed(true));
+        sheet.setOnDismissListener(d -> { hideSystemUi(); scheduleHide(); });
+        sheet.show();
+    }
+
+    /** Package-private so tests can render the sheet. */
+    void bindBookmarksSheet(View v, @androidx.annotation.Nullable android.app.Dialog sheet) {
+        BookmarksSheet.bind(v, sheet, bookmarkStore, new BookmarksSheet.Host() {
+            @Override public String videoKey() { return videoKey; }
+            @Override public long positionMs() { return player == null ? 0 : player.getCurrentPosition(); }
+            @Override public void jumpTo(long positionMs) { jumpToBookmark(positionMs); }
+            @Override public void onBookmarksChanged() { refreshBookmarkTicks(); }
+        });
+    }
+
+    private void showSubtitlesSheet() {
+        handler.removeCallbacks(hideControlsRunnable);
+        BottomSheetDialog sheet = new BottomSheetDialog(this);
+        View v = getLayoutInflater().inflate(R.layout.sheet_subtitles, null);
+        sheet.setContentView(v);
+        bindSubtitlesSheet(v, sheet);
+        sheet.setOnShowListener(d -> {
+            sheet.getBehavior().setState(BottomSheetBehavior.STATE_EXPANDED);
+            sheet.getBehavior().setSkipCollapsed(true);
+        });
+        sheet.setOnDismissListener(d -> { hideSystemUi(); scheduleHide(); });
+        sheet.show();
+    }
+
+    /** Package-private so tests can render the sheet. */
+    void bindSubtitlesSheet(View v, @androidx.annotation.Nullable android.app.Dialog sheet) {
+        SubtitleSheet.bind(v, sheet, new SubtitleSheet.Host() {
+            @Override public Player player() { return player; }
+            @Override public void setSubtitlesOn(boolean on) { setSubtitlesEnabled(on); }
+            @Override public void setSubtitleSize(int index) { applySubtitleSize(index); }
+            @Override public void pickSubtitleFile() { subtitlePicker.launch(new String[]{"*/*"}); }
+            @Override public String externalSubtitleName() { return externalSubName; }
+        });
+    }
+
+    void setSubtitlesEnabled(boolean on) {
+        PlaybackMemory.setSubtitlesOn(this, on);
+        if (player != null) {
+            player.setTrackSelectionParameters(player.getTrackSelectionParameters().buildUpon()
+                    .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !on).build());
+        }
+    }
+
+    void applySubtitleSize(int index) {
+        PlaybackMemory.setSubtitleSize(this, index);
+        if (playerView.getSubtitleView() != null) {
+            playerView.getSubtitleView().setFractionalTextSize(PlaybackMemory.subtitleFraction(PlaybackMemory.subtitleSize(this)));
+        }
+    }
+
+    /** A same-name subtitle file found next to the video: added like a picked one. */
+    private void loadAutoSubtitle(Uri uri, String name) {
+        if (player == null) return;
+        externalSubUri = uri;
+        externalSubName = name;
+        long pos = player.getCurrentPosition();
+        boolean pwr = player.getPlayWhenReady();
+        player.setMediaItem(buildMediaItem(), pos);
+        player.prepare();
+        player.setPlayWhenReady(pwr);
+        if (PlaybackMemory.subtitlesOn(this)) {
+            Toast.makeText(this, "Subtitles: " + name, Toast.LENGTH_SHORT).show();
+        }
     }
 
     private void showMoreMenu(View anchor) {
@@ -1960,6 +2201,11 @@ public class PlayerActivity extends AppCompatActivity {
         TextView upscaleValue = v.findViewById(R.id.upscale_value);
         upscaleValue.setText(upscaleSheetSubtitle());
         v.findViewById(R.id.row_upscale).setOnClickListener(x -> { sheet.dismiss(); showUpscaleDialog(); });
+        int marks = bookmarkStore.list(videoKey).size();
+        ((TextView) v.findViewById(R.id.bookmarks_value)).setText(marks == 0
+                ? "Mark moments in this video and jump back to them"
+                : marks + (marks == 1 ? " bookmark" : " bookmarks") + " in this video");
+        v.findViewById(R.id.row_bookmarks).setOnClickListener(x -> { sheet.dismiss(); showBookmarksSheet(); });
     }
 
     private void setAutoRotateToVideo(boolean on) {

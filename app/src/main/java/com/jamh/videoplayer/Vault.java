@@ -75,6 +75,8 @@ final class Vault {
         String store;
         /** 1.6.0: moved to the (app-internal, still encrypted) trash at this time; 0 = not trashed. */
         long trashedAt;
+        /** 1.6.0: {@link VideoKey} of the plaintext (bookmarks / remembered speed), "" until known. */
+        String videoKey;
         String name;
         String mime;
         long size;
@@ -88,7 +90,8 @@ final class Vault {
             return new JSONObject().put("id", id).put("file", file).put("name", name).put("mime", mime)
                     .put("size", size).put("duration", durationMs).put("w", width).put("h", height)
                     .put("added", addedMs).put("sha256", sha256 == null ? "" : sha256)
-                    .put("enc", enc).put("store", store == null ? "" : store).put("trashed", trashedAt);
+                    .put("enc", enc).put("store", store == null ? "" : store).put("trashed", trashedAt)
+                    .put("vkey", videoKey == null ? "" : videoKey);
         }
 
         static Entry fromJson(JSONObject o) {
@@ -106,6 +109,7 @@ final class Vault {
             e.enc = o.optBoolean("enc", false);
             e.store = o.optString("store", "");
             e.trashedAt = o.optLong("trashed", 0);
+            e.videoKey = o.optString("vkey", "");
             return e;
         }
     }
@@ -260,12 +264,14 @@ final class Vault {
      * Atomically switches an entry to its verified encrypted copy (keeps every other field as it
      * is in the index right now). Throws if the entry was deleted meanwhile.
      */
-    static synchronized Entry markEncrypted(Context ctx, String id, String store, String sha256) throws IOException {
+    static synchronized Entry markEncrypted(Context ctx, String id, String store, String sha256,
+                                            @Nullable String videoKey) throws IOException {
         List<Entry> l = readIndex(ctx);
         for (Entry e : l) {
             if (e.id.equals(id)) {
                 e.enc = true;
                 e.store = store;
+                if ((e.videoKey == null || e.videoKey.isEmpty()) && videoKey != null) e.videoKey = videoKey;
                 if (e.sha256 == null || e.sha256.isEmpty()) e.sha256 = sha256;
                 save(ctx, l);
                 return e;
@@ -309,6 +315,34 @@ final class Vault {
         List<Entry> l = readIndex(ctx);
         l.add(0, e);
         save(ctx, l);
+    }
+
+    /** {@link VideoKey} of an entry's plaintext (reads at most 128 KiB through the decrypting channel). */
+    static String computeVideoKey(Context ctx, Entry e) {
+        try (SeekableByteChannel ch = openSeekable(ctx, e)) {
+            return VideoKey.fromSeekable(ch);
+        } catch (IOException | RuntimeException ex) {
+            return "";
+        }
+    }
+
+    /** VideoKey for a vault Uri: the stored one, else computed now and stored. Worker thread. */
+    @Nullable
+    static String videoKeyOf(Context ctx, Uri uri) {
+        Entry e = findByUri(ctx, uri);
+        if (e == null) return null;
+        if (e.videoKey != null && !e.videoKey.isEmpty()) return e.videoKey;
+        String k = computeVideoKey(ctx, e);
+        if (k.isEmpty()) return null;
+        synchronized (Vault.class) {
+            List<Entry> l = readIndex(ctx);
+            for (Entry x : l) if (x.id.equals(e.id)) x.videoKey = k;
+            try {
+                save(ctx, l);
+            } catch (IOException ignored) {
+            }
+        }
+        return k;
     }
 
     /** Adds a fully written, verified entry (backup restore). */
@@ -505,6 +539,7 @@ final class Vault {
         e.addedMs = System.currentTimeMillis();
         e.sha256 = srcHash;
         readMetadataAndThumb(ctx, e);
+        e.videoKey = computeVideoKey(ctx, e); // from the plaintext, before the original is deleted
         try {
             add(ctx, e);
         } catch (IOException ex) {

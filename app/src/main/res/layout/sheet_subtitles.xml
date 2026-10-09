@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 1.6: subtitles (on/off, track, size, load file, auto-load matching file). -->
+<androidx.core.widget.NestedScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingBottom="16dp">
+
+        <com.google.android.material.bottomsheet.BottomSheetDragHandleView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"/>
+
+        <LinearLayout style="@style/SubsSheetLabelRow">
+            <View style="@style/SubsSheetLabelBar"/>
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Subtitles"
+                android:textAppearance="@style/TextAppearance.Ulfur.Label"/>
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/row_subs_on"
+            style="@style/MenuRow">
+            <ImageView style="@style/MenuRowIcon" android:src="@drawable/ic_subtitles"/>
+            <LinearLayout style="@style/MenuRowTexts">
+                <TextView style="@style/MenuRowTitle" android:text="Show subtitles"/>
+                <TextView android:id="@+id/subs_on_value" style="@style/MenuRowSubtitle" android:text="No subtitles in this video"/>
+            </LinearLayout>
+            <com.google.android.material.materialswitch.MaterialSwitch
+                android:id="@+id/switch_subs_on"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"/>
+        </LinearLayout>
+
+        <!-- Tracks (filled in code; one row per subtitle track) -->
+        <LinearLayout
+            android:id="@+id/subs_tracks"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"/>
+
+        <LinearLayout style="@style/SubsSheetLabelRow" android:layout_marginTop="8dp">
+            <View style="@style/SubsSheetLabelBar"/>
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Text size"
+                android:textAppearance="@style/TextAppearance.Ulfur.Label"/>
+        </LinearLayout>
+
+        <com.google.android.material.chip.ChipGroup
+            android:id="@+id/subs_size_group"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingStart="20dp"
+            android:paddingEnd="20dp"
+            app:chipSpacingHorizontal="8dp"
+            app:selectionRequired="true"
+            app:singleSelection="true"/>
+
+        <LinearLayout
+            android:id="@+id/row_subs_load"
+            style="@style/MenuRow"
+            android:layout_marginTop="8dp">
+            <ImageView style="@style/MenuRowIcon" android:src="@drawable/ic_folder"/>
+            <LinearLayout style="@style/MenuRowTexts">
+                <TextView style="@style/MenuRowTitle" android:text="Load subtitles…"/>
+                <TextView android:id="@+id/subs_load_value" style="@style/MenuRowSubtitle" android:text="Pick an .srt, .vtt or .ass file"/>
+            </LinearLayout>
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/row_subs_auto"
+            style="@style/MenuRow">
+            <ImageView style="@style/MenuRowIcon" android:src="@drawable/ic_link"/>
+            <LinearLayout style="@style/MenuRowTexts">
+                <TextView style="@style/MenuRowTitle" android:text="Load matching subtitle files"/>
+                <TextView style="@style/MenuRowSubtitle" android:text="Plays Film.srt or Film.vtt from the same folder as Film.mp4, where Android allows it"/>
+            </LinearLayout>
+            <com.google.android.material.materialswitch.MaterialSwitch
+                android:id="@+id/switch_subs_auto"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"/>
+        </LinearLayout>
+    </LinearLayout>
+</androidx.core.widget.NestedScrollView>

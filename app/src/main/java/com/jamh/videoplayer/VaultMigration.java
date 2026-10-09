@@ -231,7 +231,13 @@ final class VaultMigration {
             phase(PHASE_VERIFIED, e);
             if (!tmp.renameTo(enc)) throw new IOException("Couldn't store the encrypted copy");
             phase(PHASE_RENAMED, e);
-            Vault.Entry upd = Vault.markEncrypted(ctx, e.id, enc.getName(), hash);
+            // Bookmarks / speed key from the plaintext, kept in the entry (MC's VideoKey).
+            String vkey = null;
+            try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(plain, "r")) {
+                vkey = VideoKey.fromChannel(raf.getChannel(), raf.length());
+            } catch (IOException | RuntimeException ignored) {
+            }
+            Vault.Entry upd = Vault.markEncrypted(ctx, e.id, enc.getName(), hash, vkey);
             indexed = true;
             phase(PHASE_INDEXED, e);
             if (!plain.delete() && plain.exists()) {

@@ -128,16 +128,20 @@ public class V16ResumePipTest {
     public void privateResumeFileIsExcludedFromBackup() throws Exception {
         for (int res : new int[]{R.xml.data_extraction_rules, R.xml.backup_rules}) {
             XmlResourceParser x = app.getResources().getXml(res);
-            boolean resume = false, keyset = false;
+            boolean resume = false, keyset = false, bookmarks = false, speeds = false;
             while (x.next() != XmlResourceParser.END_DOCUMENT) {
                 if (x.getEventType() == XmlResourceParser.START_TAG && "exclude".equals(x.getName())) {
                     String path = x.getAttributeValue(null, "path");
                     if ("private_resume.xml".equals(path)) resume = true;
                     if ("ulfur_vault_keyset.xml".equals(path)) keyset = true;
+                    if ("bookmarks.xml".equals(path)) bookmarks = true;
+                    if ("speeds.xml".equals(path)) speeds = true;
                 }
             }
             assertTrue(resume);
             assertTrue(keyset);
+            assertTrue("bookmark names stay out of backups", bookmarks);
+            assertTrue(speeds);
         }
     }
 

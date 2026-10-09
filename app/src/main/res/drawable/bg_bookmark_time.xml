@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 1.6: time pill on a bookmark row (Blood Moon outline on the surface colour). -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="@color/surface_tint"/>
+    <stroke android:width="1dp" android:color="@color/accent"/>
+    <corners android:radius="10dp"/>
+</shape>
