@@ -84,7 +84,7 @@ public class V13FeatureTest {
         VaultLock.lock();
     }
 
-    private static void write(Bitmap b, String name) throws Exception {
+    static void write(Bitmap b, String name) throws Exception {
         OUT.mkdirs();
         try (FileOutputStream fos = new FileOutputStream(new File(OUT, name))) {
             b.compress(Bitmap.CompressFormat.PNG, 100, fos);

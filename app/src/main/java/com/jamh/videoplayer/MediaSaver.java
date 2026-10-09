@@ -21,7 +21,7 @@ import java.io.OutputStream;
 /** Copies an exported file into shared storage: Movies/VideoPlayer (MP4) or Pictures/VideoPlayer (GIF). */
 final class MediaSaver {
 
-    static final String FOLDER = "VideoPlayer";
+    static final String FOLDER = "UlfurVideo"; // was "VideoPlayer" up to 1.3.0; existing files there are left alone
 
     private MediaSaver() {
     }

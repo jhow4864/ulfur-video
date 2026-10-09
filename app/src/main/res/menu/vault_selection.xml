@@ -1,0 +1,8 @@
+<menu xmlns:android="http://schemas.android.com/apk/res/android" xmlns:app="http://schemas.android.com/apk/res-auto">
+    <item android:id="@+id/action_vault_select_all" android:title="@string/select_all" android:icon="@drawable/ic_select_all"
+        app:iconTint="?attr/colorOnSurface" app:showAsAction="ifRoom"/>
+    <item android:id="@+id/action_vault_move_out" android:title="@string/move_out_selected" android:icon="@drawable/ic_move_out"
+        app:iconTint="?attr/colorPrimary" app:showAsAction="ifRoom"/>
+    <item android:id="@+id/action_vault_delete" android:title="@string/delete_selected" android:icon="@drawable/ic_delete"
+        app:iconTint="?attr/colorOnSurface" app:showAsAction="ifRoom"/>
+</menu>

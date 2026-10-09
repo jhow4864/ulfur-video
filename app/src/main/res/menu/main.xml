@@ -16,5 +16,7 @@
         app:iconTint="?attr/colorOnSurface" app:showAsAction="ifRoom"/>
     <item android:id="@+id/action_default_player" android:title="Set as default player" app:showAsAction="never"/>
     <item android:id="@+id/action_open_url" android:title="Open network stream…" app:showAsAction="never"/>
+    <item android:id="@+id/action_select" android:title="Select videos" app:showAsAction="never"/>
+    <item android:id="@+id/action_warn_private" android:title="@string/warn_before_private" android:checkable="true" app:showAsAction="never"/>
     <item android:id="@+id/action_refresh" android:title="Refresh" app:showAsAction="never"/>
 </menu>

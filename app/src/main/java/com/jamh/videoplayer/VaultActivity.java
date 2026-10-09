@@ -17,7 +17,6 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.widget.ImageView;
-import android.widget.PopupMenu;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -38,7 +37,9 @@ import com.google.android.material.progressindicator.LinearProgressIndicator;
 
 import java.io.File;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -66,7 +67,13 @@ public class VaultActivity extends AppCompatActivity {
     private BiometricPrompt prompt;
     private boolean authInProgress;
     private boolean noScreenLock;
-    private Vault.Entry pendingMoveOut;
+    private List<Vault.Entry> pendingMoveOut;
+    // 1.4.0 multi-select
+    private final Set<String> selected = new LinkedHashSet<>();
+    private boolean selecting;
+    private com.google.android.material.appbar.MaterialToolbar toolbar;
+    private View selectionBar;
+    private TextView selectAllButton, moveOutButton;
     private ActivityResultLauncher<String> writePermission;
 
     @Override
@@ -76,15 +83,39 @@ public class VaultActivity extends AppCompatActivity {
         if (Build.VERSION.SDK_INT >= 33) setRecentsScreenshotEnabled(false);
         setContentView(R.layout.activity_vault);
         com.google.android.material.appbar.MaterialToolbar tb = findViewById(R.id.vault_toolbar);
-        tb.setNavigationOnClickListener(v -> finish());
+        toolbar = tb;
+        tb.setNavigationOnClickListener(v -> {
+            if (selecting) setSelecting(false); else finish();
+        });
         tb.inflateMenu(R.menu.vault);
         tb.setOnMenuItemClickListener(item -> {
-            if (item.getItemId() == R.id.action_lock_now) {
+            int id = item.getItemId();
+            if (id == R.id.action_lock_now) {
                 VaultLock.lock();
                 finish();
                 return true;
+            } else if (id == R.id.action_vault_select_all) {
+                toggleSelectAll();
+                return true;
+            } else if (id == R.id.action_vault_move_out) {
+                requestMoveOut(selectedEntries());
+                return true;
+            } else if (id == R.id.action_vault_delete) {
+                confirmDelete(selectedEntries());
+                return true;
             }
             return false;
+        });
+        selectionBar = findViewById(R.id.vault_selection_bar);
+        selectAllButton = findViewById(R.id.vault_select_all);
+        moveOutButton = findViewById(R.id.vault_move_out_selected);
+        selectAllButton.setOnClickListener(v -> toggleSelectAll());
+        moveOutButton.setOnClickListener(v -> requestMoveOut(selectedEntries()));
+        findViewById(R.id.vault_delete_selected).setOnClickListener(v -> confirmDelete(selectedEntries()));
+        getOnBackPressedDispatcher().addCallback(this, new androidx.activity.OnBackPressedCallback(true) {
+            @Override public void handleOnBackPressed() {
+                if (selecting) setSelecting(false); else finish();
+            }
         });
         lockedPanel = findViewById(R.id.vault_locked);
         content = findViewById(R.id.vault_content);
@@ -122,7 +153,7 @@ public class VaultActivity extends AppCompatActivity {
             }
         });
         writePermission = registerForActivityResult(new ActivityResultContracts.RequestPermission(), granted -> {
-            Vault.Entry e = pendingMoveOut;
+            List<Vault.Entry> e = pendingMoveOut;
             pendingMoveOut = null;
             if (granted && e != null) moveOut(e);
             else if (e != null) Toast.makeText(this, "Storage permission is needed to move videos out", Toast.LENGTH_LONG).show();
@@ -182,6 +213,7 @@ public class VaultActivity extends AppCompatActivity {
     }
 
     private void hideContentNow() {
+        if (selecting) setSelecting(false);
         content.setVisibility(View.GONE);
         entries.clear();
         adapter.notifyDataSetChanged();
@@ -212,7 +244,12 @@ public class VaultActivity extends AppCompatActivity {
     void bind(List<Vault.Entry> l, long used, long free) {
         entries.clear();
         entries.addAll(l);
+        Set<String> present = new java.util.HashSet<>();
+        for (Vault.Entry e : l) present.add(e.id);
+        selected.retainAll(present);
+        if (selecting && l.isEmpty()) setSelecting(false);
         adapter.notifyDataSetChanged();
+        updateSelectionUi();
         emptyView.setVisibility(l.isEmpty() ? View.VISIBLE : View.GONE);
         storageText.setText(storageLabel(l.size(), used, free));
         long total = used + free;
@@ -230,57 +267,128 @@ public class VaultActivity extends AppCompatActivity {
         startActivity(i);
     }
 
-    private void showOptions(Vault.Entry e, View anchor) {
-        PopupMenu pm = new PopupMenu(this, anchor);
-        pm.getMenu().add(0, 1, 0, R.string.move_out_of_private);
-        pm.getMenu().add(0, 2, 1, R.string.delete_permanently);
-        pm.setOnMenuItemClickListener(item -> {
-            if (item.getItemId() == 1) {
-                if (Build.VERSION.SDK_INT < 29 && ContextCompat.checkSelfPermission(this,
-                        Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
-                    pendingMoveOut = e;
-                    writePermission.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE);
-                } else {
-                    moveOut(e);
-                }
-            } else {
-                new MaterialAlertDialogBuilder(this)
-                        .setTitle("Delete permanently?")
-                        .setMessage("\u201c" + e.name + "\u201d will be deleted from this phone. This can't be undone.")
-                        .setNegativeButton(android.R.string.cancel, null)
-                        .setPositiveButton("Delete", (d, w) -> {
-                            final android.content.Context app = getApplicationContext();
-                            io.execute(() -> {
-                                Vault.delete(app, e);
-                                handler.post(this::reload);
-                            });
-                        })
-                        .show();
-            }
-            return true;
-        });
-        pm.show();
+    // ------------------------------------------------------------------ multi-select (1.4.0)
+
+    @VisibleForTesting
+    void setSelecting(boolean on) {
+        if (selecting == on) return;
+        selecting = on;
+        if (!on) selected.clear();
+        toolbar.getMenu().clear();
+        toolbar.inflateMenu(on ? R.menu.vault_selection : R.menu.vault);
+        toolbar.setNavigationIcon(on ? R.drawable.ic_close : R.drawable.ic_arrow_back);
+        if (toolbar.getNavigationIcon() != null) toolbar.getNavigationIcon().setTint(0xFFF2F2F7);
+        adapter.notifyDataSetChanged();
+        updateSelectionUi();
     }
 
-    private void moveOut(Vault.Entry e) {
+    @VisibleForTesting
+    void toggle(Vault.Entry e) {
+        if (!selected.remove(e.id)) selected.add(e.id);
+        int pos = entries.indexOf(e);
+        if (pos >= 0) adapter.notifyItemChanged(pos); else adapter.notifyDataSetChanged();
+        updateSelectionUi();
+    }
+
+    private void toggleSelectAll() {
+        if (!selecting) setSelecting(true);
+        if (!entries.isEmpty() && selected.size() >= entries.size()) {
+            selected.clear();
+        } else {
+            for (Vault.Entry e : entries) selected.add(e.id);
+        }
+        adapter.notifyDataSetChanged();
+        updateSelectionUi();
+    }
+
+    private void updateSelectionUi() {
+        if (toolbar == null) return;
+        int n = selected.size();
+        toolbar.setTitle(selecting ? getString(R.string.selection_count, n) : getString(R.string.vault_title));
+        selectionBar.setVisibility(selecting ? View.VISIBLE : View.GONE);
+        moveOutButton.setEnabled(n > 0);
+        moveOutButton.setAlpha(n > 0 ? 1f : 0.45f);
+        moveOutButton.setText(n > 1 ? "Move " + n + " out of Private" : getString(R.string.move_out_selected));
+        selectAllButton.setText(!entries.isEmpty() && n >= entries.size() ? R.string.clear_selection : R.string.select_all);
+        int pad = selecting ? (int) (96 * getResources().getDisplayMetrics().density) : 0;
+        list.setPadding(list.getPaddingLeft(), list.getPaddingTop(), list.getPaddingRight(), pad + list.getPaddingLeft());
+    }
+
+    private List<Vault.Entry> selectedEntries() {
+        List<Vault.Entry> out = new ArrayList<>();
+        for (Vault.Entry e : entries) if (selected.contains(e.id)) out.add(e);
+        return out;
+    }
+
+    private void requestMoveOut(List<Vault.Entry> list) {
+        if (list.isEmpty()) {
+            Toast.makeText(this, "Select some videos first", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (Build.VERSION.SDK_INT < 29 && ContextCompat.checkSelfPermission(this,
+                Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+            pendingMoveOut = list;
+            writePermission.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE);
+        } else {
+            moveOut(list);
+        }
+    }
+
+    private void confirmDelete(List<Vault.Entry> list) {
+        if (list.isEmpty()) {
+            Toast.makeText(this, "Select some videos first", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        String what = list.size() == 1 ? "\u201c" + list.get(0).name + "\u201d will" : list.size() + " videos will";
+        new MaterialAlertDialogBuilder(this)
+                .setTitle(list.size() == 1 ? "Delete permanently?" : "Delete " + list.size() + " videos permanently?")
+                .setMessage(what + " be deleted from this phone. This can't be undone.")
+                .setNegativeButton(android.R.string.cancel, null)
+                .setPositiveButton("Delete", (d, w) -> {
+                    final android.content.Context app = getApplicationContext();
+                    setSelecting(false);
+                    io.execute(() -> {
+                        for (Vault.Entry e : list) Vault.delete(app, e);
+                        handler.post(this::reload);
+                    });
+                })
+                .show();
+    }
+
+    /** Moves one or many videos out to Movies/UlfurVideo, one after the other, with one progress dialog. */
+    private void moveOut(List<Vault.Entry> list) {
+        final int n = list.size();
         View v = LayoutInflater.from(this).inflate(R.layout.dialog_export_progress, null);
-        ((TextView) v.findViewById(R.id.export_status)).setText("Copying to Movies/" + MediaSaver.FOLDER + "…");
-        AlertDialog dlg = new MaterialAlertDialogBuilder(this).setTitle("Moving out of Private")
+        TextView status = v.findViewById(R.id.export_status);
+        status.setText("Copying to Movies/" + MediaSaver.FOLDER + "…");
+        AlertDialog dlg = new MaterialAlertDialogBuilder(this)
+                .setTitle(n == 1 ? "Moving out of Private" : "Moving " + n + " videos out of Private")
                 .setView(v).setCancelable(false).show();
+        setSelecting(false);
         final android.content.Context app = getApplicationContext();
         io.execute(() -> {
+            int ok = 0;
             String err = null;
-            try {
-                Vault.moveOut(app, e);
-            } catch (Exception ex) {
-                err = ex.getMessage() == null ? "Couldn't move the video" : ex.getMessage();
+            for (int i = 0; i < n; i++) {
+                final int k = i;
+                if (n > 1) handler.post(() -> status.setText("Copying " + (k + 1) + " of " + n + " to Movies/" + MediaSaver.FOLDER + "…"));
+                try {
+                    Vault.moveOut(app, list.get(i));
+                    ok++;
+                } catch (Exception ex) {
+                    if (err == null) err = ex.getMessage() == null ? "Couldn't move the video" : ex.getMessage();
+                }
             }
+            final int moved = ok;
             final String error = err;
             handler.post(() -> {
                 if (isDestroyed()) return;
-                dlg.dismiss();
-                Toast.makeText(this, error == null ? "Moved to Movies/" + MediaSaver.FOLDER : error,
-                        Toast.LENGTH_LONG).show();
+                try { dlg.dismiss(); } catch (RuntimeException ignored) { }
+                String msg;
+                if (error == null) msg = (n == 1 ? "Moved" : "Moved " + moved + " videos") + " to Movies/" + MediaSaver.FOLDER;
+                else if (moved == 0) msg = error;
+                else msg = "Moved " + moved + " of " + n + " to Movies/" + MediaSaver.FOLDER + ". " + error;
+                Toast.makeText(this, msg, Toast.LENGTH_LONG).show();
                 reload();
             });
         });
@@ -302,9 +410,20 @@ public class VaultActivity extends AppCompatActivity {
             h.meta.setText(Fmt.size(e.size) + (e.height > 0 ? " · " + Math.min(e.width, e.height) + "p" : ""));
             h.duration.setText(Fmt.time(e.durationMs));
             h.duration.setVisibility(e.durationMs > 0 ? View.VISIBLE : View.GONE);
-            h.itemView.setOnClickListener(x -> play(e));
+            boolean sel = selected.contains(e.id);
+            if (h.overlay != null) h.overlay.setVisibility(sel ? View.VISIBLE : View.GONE);
+            if (h.check != null) {
+                h.check.setVisibility(selecting ? View.VISIBLE : View.GONE);
+                h.check.setBackgroundResource(sel ? R.drawable.bg_check_on : R.drawable.bg_check_off);
+                h.check.setImageResource(sel ? R.drawable.ic_check : 0);
+            }
+            h.itemView.setOnClickListener(x -> {
+                if (selecting) toggle(e); else play(e);
+            });
             h.itemView.setOnLongClickListener(x -> {
-                showOptions(e, x);
+                if (!selecting) setSelecting(true);
+                toggle(e);
+                x.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS);
                 return true;
             });
             h.boundId = e.id;
@@ -331,12 +450,17 @@ public class VaultActivity extends AppCompatActivity {
     }
 
     private static final class Holder extends RecyclerView.ViewHolder {
-        final ImageView thumb;
+        final ImageView thumb, check;
+        final View overlay;
         final TextView title, meta, duration;
         String boundId;
 
         Holder(View v) {
             super(v);
+            check = v.findViewById(R.id.select_check);
+            overlay = v.findViewById(R.id.selection_overlay);
+            View frame = v.findViewById(R.id.thumb_frame);
+            if (frame != null) frame.setClipToOutline(true);
             thumb = v.findViewById(R.id.thumb);
             title = v.findViewById(R.id.title);
             meta = v.findViewById(R.id.meta);

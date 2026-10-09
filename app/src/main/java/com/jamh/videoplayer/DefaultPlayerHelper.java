@@ -20,7 +20,7 @@ import java.io.OutputStream;
 
 /**
  * Detects which app is the system default for opening videos, and helps the user make
- * Video Player the default (Android does not allow an app to set itself as default).
+ * Ulfur Video the default (Android does not allow an app to set itself as default).
  */
 public final class DefaultPlayerHelper {
 

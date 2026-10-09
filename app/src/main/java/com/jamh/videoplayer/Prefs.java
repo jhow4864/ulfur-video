@@ -37,6 +37,10 @@ public final class Prefs {
     public static int clipsFilter(Context c) { return s(c).getInt("clips_filter", 0); }
     public static void setClipsFilter(Context c, int v) { s(c).edit().putInt("clips_filter", v).apply(); }
 
+    /** 1.4.0: the Move to Private warning; false once the user ticks "Don't ask me again". */
+    public static boolean warnBeforePrivate(Context c) { return s(c).getBoolean("warn_before_private", true); }
+    public static void setWarnBeforePrivate(Context c, boolean v) { s(c).edit().putBoolean("warn_before_private", v).apply(); }
+
     public static boolean defaultBannerDismissed(Context c) { return s(c).getBoolean("default_banner_dismissed", false); }
     public static void setDefaultBannerDismissed(Context c) { s(c).edit().putBoolean("default_banner_dismissed", true).apply(); }
 

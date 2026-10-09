@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Ulfur primary action: Blood Moon gradient pill (same as Ulfur Text's "Import files"). -->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android" android:color="#33FFFFFF">
+    <item>
+        <shape android:shape="rectangle">
+            <corners android:radius="24dp"/>
+            <gradient android:angle="0" android:startColor="@color/accent_start" android:centerColor="@color/accent_mid" android:endColor="@color/accent_end"/>
+        </shape>
+    </item>
+</ripple>

@@ -5,17 +5,22 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:background="?attr/colorSurface">
+    android:background="@color/private_bg">
 
     <com.google.android.material.appbar.MaterialToolbar
         android:id="@+id/vault_toolbar"
         android:layout_width="match_parent"
         android:layout_height="?attr/actionBarSize"
-        android:background="?attr/colorSurface"
+        android:background="@color/private_bg"
         app:navigationIcon="@drawable/ic_arrow_back"
         app:navigationIconTint="?attr/colorOnSurface"
         app:title="@string/vault_title"
-        app:titleTextAppearance="@style/TextAppearance.Material3.TitleLarge"/>
+        app:titleTextAppearance="@style/TextAppearance.Ulfur.Title"/>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="@color/private_stroke"/>
 
     <!-- Locked state (also used for "no screen lock set up") -->
     <LinearLayout
@@ -33,8 +38,8 @@
             android:background="@drawable/bg_center_play"
             android:padding="18dp"
             android:src="@drawable/ic_lock"
-            app:tint="?attr/colorOnPrimaryContainer"
-            android:backgroundTint="?attr/colorPrimaryContainer"
+            app:tint="@color/private_ink"
+            android:backgroundTint="@color/private_stroke"
             android:importantForAccessibility="no"/>
 
         <TextView
@@ -44,6 +49,8 @@
             android:layout_marginTop="20dp"
             android:gravity="center"
             android:text="@string/vault_locked_title"
+            android:fontFamily="@font/heading"
+            android:letterSpacing="0.04"
             android:textAppearance="?attr/textAppearanceTitleLarge"/>
 
         <TextView
@@ -79,10 +86,11 @@
             android:layout_height="wrap_content"
             android:layout_marginStart="12dp"
             android:layout_marginEnd="12dp"
-            android:layout_marginTop="4dp"
-            app:cardBackgroundColor="?attr/colorErrorContainer"
-            app:cardCornerRadius="14dp"
-            app:strokeWidth="0dp">
+            android:layout_marginTop="10dp"
+            app:cardBackgroundColor="@color/warn_bg"
+            app:cardCornerRadius="16dp"
+            app:strokeColor="@color/warn"
+            app:strokeWidth="1dp">
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -95,7 +103,7 @@
                     android:layout_height="22dp"
                     android:layout_marginTop="1dp"
                     android:src="@drawable/ic_info"
-                    app:tint="?attr/colorOnErrorContainer"
+                    app:tint="@color/warn"
                     android:importantForAccessibility="no"/>
 
                 <TextView
@@ -123,7 +131,8 @@
                 android:id="@+id/vault_storage"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:textAppearance="?attr/textAppearanceTitleSmall"/>
+                android:textAppearance="@style/TextAppearance.Ulfur.Label"
+                android:textColor="@color/private_ink"/>
 
             <com.google.android.material.progressindicator.LinearProgressIndicator
                 android:id="@+id/vault_storage_bar"
@@ -131,6 +140,8 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="6dp"
                 android:max="1000"
+                app:indicatorColor="@color/accent"
+                app:trackColor="@color/private_stroke"
                 app:trackCornerRadius="3dp"/>
 
             <TextView
@@ -167,6 +178,62 @@
                 android:textAppearance="?attr/textAppearanceBodyLarge"
                 android:textColor="?attr/colorOnSurfaceVariant"
                 android:visibility="gone"/>
+
+            <!-- 1.4.0 multi-select: bulk actions -->
+            <LinearLayout
+                android:id="@+id/vault_selection_bar"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_gravity="bottom"
+                android:layout_margin="16dp"
+                android:background="@drawable/bg_selection_bar"
+                android:elevation="12dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:padding="8dp"
+                android:visibility="gone">
+
+                <TextView
+                    android:id="@+id/vault_select_all"
+                    android:layout_width="wrap_content"
+                    android:layout_height="48dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:gravity="center_vertical"
+                    android:paddingStart="12dp"
+                    android:paddingEnd="8dp"
+                    android:text="@string/select_all"
+                    android:textColor="@color/text_primary"
+                    android:fontFamily="@font/inter_semibold"
+                    android:textSize="14sp"
+                    android:focusable="true"
+                    android:clickable="true"/>
+
+                <ImageView
+                    android:id="@+id/vault_delete_selected"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:padding="12dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:contentDescription="@string/delete_selected"
+                    android:src="@drawable/ic_delete"
+                    app:tint="@color/text_secondary"/>
+
+                <TextView
+                    android:id="@+id/vault_move_out_selected"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:layout_marginStart="4dp"
+                    android:background="@drawable/bg_gradient_button"
+                    android:fontFamily="@font/heading"
+                    android:gravity="center"
+                    android:letterSpacing="0.06"
+                    android:text="@string/move_out_selected"
+                    android:textColor="@color/on_accent"
+                    android:textSize="15sp"
+                    android:focusable="true"
+                    android:clickable="true"/>
+            </LinearLayout>
         </FrameLayout>
     </LinearLayout>
 </LinearLayout>

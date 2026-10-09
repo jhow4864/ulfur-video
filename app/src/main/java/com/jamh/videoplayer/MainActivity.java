@@ -42,7 +42,9 @@ import com.google.android.material.snackbar.Snackbar;
 import com.google.android.material.tabs.TabLayout;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -73,6 +75,8 @@ public class MainActivity extends AppCompatActivity implements LibraryAdapter.Li
     private boolean permissionAskedOnce;
     private MenuItem searchItem;
     private View defaultBanner;
+    private View selectionBar;
+    private TextView selectionMoveButton, selectionSelectAll;
     /** Set when we sent the user to Settings or the "Open with" dialog; re-checked in onResume. */
     private boolean pendingDefaultCheck;
 
@@ -98,6 +102,11 @@ public class MainActivity extends AppCompatActivity implements LibraryAdapter.Li
         subtitle = findViewById(R.id.subtitle);
         permissionButton = findViewById(R.id.btn_permission);
         defaultBanner = findViewById(R.id.default_banner);
+        selectionBar = findViewById(R.id.selection_bar);
+        selectionMoveButton = findViewById(R.id.selection_move_private);
+        selectionSelectAll = findViewById(R.id.selection_select_all);
+        selectionMoveButton.setOnClickListener(v -> moveSelectedToPrivate());
+        selectionSelectAll.setOnClickListener(v -> toggleSelectAll());
         findViewById(R.id.banner_setup).setOnClickListener(v -> {
             Prefs.setDefaultBannerDismissed(this);
             defaultBanner.setVisibility(View.GONE);
@@ -113,8 +122,10 @@ public class MainActivity extends AppCompatActivity implements LibraryAdapter.Li
         ViewCompat.setOnApplyWindowInsetsListener(root, (v, insets) -> {
             Insets i = insets.getInsets(WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout());
             v.setPadding(i.left, i.top, i.right, 0);
-            recycler.setPadding(recycler.getPaddingLeft(), recycler.getPaddingTop(), recycler.getPaddingRight(),
-                    i.bottom + dp(24));
+            navBarInset = i.bottom;
+            updateRecyclerBottomPadding();
+            ((android.view.ViewGroup.MarginLayoutParams) selectionBar.getLayoutParams()).bottomMargin = i.bottom + dp(16);
+            selectionBar.requestLayout();
             return insets;
         });
 
@@ -147,6 +158,7 @@ public class MainActivity extends AppCompatActivity implements LibraryAdapter.Li
         tabs.addOnTabSelectedListener(new TabLayout.OnTabSelectedListener() {
             @Override public void onTabSelected(TabLayout.Tab t) {
                 tab = t.getPosition();
+                if (adapter != null) adapter.setSelectionMode(false);
                 openFolderId = null;
                 applyLayoutManager();
                 render();
@@ -160,13 +172,20 @@ public class MainActivity extends AppCompatActivity implements LibraryAdapter.Li
         adapter = new LibraryAdapter(this);
         recycler.setAdapter(adapter);
         applyLayoutManager();
+        if (savedInstanceState != null && savedInstanceState.getBoolean("selecting", false)) {
+            adapter.restoreSelection(savedInstanceState.getLongArray("selectedIds"));
+        }
 
         permissionButton.setOnClickListener(v -> requestOrOpenSettings());
-        toolbar.setNavigationOnClickListener(v -> closeFolder());
+        toolbar.setNavigationOnClickListener(v -> {
+            if (adapter.isSelectionMode()) exitSelection(); else closeFolder();
+        });
 
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
             @Override public void handleOnBackPressed() {
-                if (searchItem != null && searchItem.isActionViewExpanded()) {
+                if (adapter.isSelectionMode()) {
+                    exitSelection();
+                } else if (searchItem != null && searchItem.isActionViewExpanded()) {
                     searchItem.collapseActionView();
                 } else if (openFolderId != null) {
                     closeFolder();
@@ -210,6 +229,14 @@ public class MainActivity extends AppCompatActivity implements LibraryAdapter.Li
         out.putString("folderName", openFolderName);
         out.putString("query", query);
         out.putBoolean("pendingDefaultCheck", pendingDefaultCheck);
+        if (adapter != null && adapter.isSelectionMode()) {
+            out.putBoolean("selecting", true);
+            Set<Long> ids = adapter.selectedIds();
+            long[] arr = new long[ids.size()];
+            int k = 0;
+            for (long id : ids) arr[k++] = id;
+            out.putLongArray("selectedIds", arr);
+        }
     }
 
     @Override
@@ -281,6 +308,9 @@ public class MainActivity extends AppCompatActivity implements LibraryAdapter.Li
             main.post(() -> {
                 if (isDestroyed()) return;
                 allVideos = list;
+                Set<Long> present = new HashSet<>();
+                for (VideoItem v : list) present.add(v.id);
+                adapter.retainSelection(present);
                 render();
                 if (openFeedWhenLoaded) {
                     openFeedWhenLoaded = false;
@@ -293,8 +323,7 @@ public class MainActivity extends AppCompatActivity implements LibraryAdapter.Li
     private void render() {
         if (!hasFullAccess() && !hasPartialAccess()) return;
         boolean inFolder = openFolderId != null;
-        toolbar.setNavigationIcon(inFolder ? ContextCompat.getDrawable(this, R.drawable.ic_arrow_back) : null);
-        toolbar.setTitle(inFolder ? openFolderName : getString(R.string.app_name));
+        updateToolbar();
         String q = query.trim().toLowerCase(Locale.ROOT);
 
         List<Object> data = new ArrayList<>();
@@ -331,6 +360,9 @@ public class MainActivity extends AppCompatActivity implements LibraryAdapter.Li
             Sort.folders(filtered, sort);
             data.addAll(filtered);
             sub = filtered.size() + (filtered.size() == 1 ? " folder" : " folders");
+        }
+        if (tab != TAB_FOLDERS || inFolder) {
+            if (!data.isEmpty() && !adapter.isSelectionMode()) sub += "  ·  " + getString(R.string.library_hint);
         }
         if (!hasFullAccess() && hasPartialAccess()) {
             sub += "  ·  Limited access (tap to allow all)";
@@ -375,6 +407,89 @@ public class MainActivity extends AppCompatActivity implements LibraryAdapter.Li
         render();
     }
 
+    // ---------------------------------------------------------------- multi-select (1.4.0)
+
+    private int navBarInset;
+
+    private void updateRecyclerBottomPadding() {
+        boolean bar = adapter != null && adapter.isSelectionMode();
+        recycler.setPadding(recycler.getPaddingLeft(), recycler.getPaddingTop(), recycler.getPaddingRight(),
+                navBarInset + dp(bar ? 96 : 24));
+    }
+
+    /** Toolbar: app mark + "Ulfur Video" at the top level, folder name inside a folder, "N selected" while selecting. */
+    private void updateToolbar() {
+        boolean selecting = adapter != null && adapter.isSelectionMode();
+        boolean inFolder = openFolderId != null;
+        if (selecting) {
+            toolbar.setLogo(null);
+            toolbar.setNavigationIcon(R.drawable.ic_close);
+            toolbar.setNavigationContentDescription(R.string.clear_selection);
+            toolbar.setTitle(getString(R.string.selection_count, adapter.selectedCount()));
+        } else {
+            toolbar.setLogo(inFolder ? null : ContextCompat.getDrawable(this, R.drawable.ic_app_mark));
+            toolbar.setNavigationIcon(inFolder ? ContextCompat.getDrawable(this, R.drawable.ic_arrow_back) : null);
+            toolbar.setNavigationContentDescription(null);
+            toolbar.setTitle(inFolder ? openFolderName : getString(R.string.app_name));
+        }
+        if (toolbar.getNavigationIcon() != null) toolbar.getNavigationIcon().setTint(0xFFF2F2F7);
+    }
+
+    private void enterSelection(VideoItem first) {
+        if (searchItem != null && searchItem.isActionViewExpanded()) {
+            // keep the filtered list: just hide the keyboard
+            View f = getCurrentFocus();
+            if (f != null) f.clearFocus();
+        }
+        adapter.setSelectionMode(true);
+        if (first != null) adapter.toggle(first);
+        render();
+    }
+
+    void exitSelection() {
+        adapter.setSelectionMode(false);
+        render();
+    }
+
+    @Override
+    public void onSelectionChanged(int count) {
+        boolean selecting = adapter != null && adapter.isSelectionMode();
+        selectionBar.setVisibility(selecting ? View.VISIBLE : View.GONE);
+        selectionMoveButton.setEnabled(count > 0);
+        selectionMoveButton.setAlpha(count > 0 ? 1f : 0.45f);
+        selectionMoveButton.setText(count > 1 ? "Move " + count + " to Private" : getString(R.string.move_selected_to_private));
+        boolean all = adapter != null && count > 0 && count >= adapter.visibleVideoCount();
+        selectionSelectAll.setText(all ? R.string.clear_selection : R.string.select_all);
+        updateRecyclerBottomPadding();
+        updateToolbar();
+        invalidateOptionsMenu();
+    }
+
+    private void toggleSelectAll() {
+        if (adapter.selectedCount() > 0 && adapter.selectedCount() >= adapter.visibleVideoCount()) {
+            adapter.setSelectionMode(false);
+            adapter.setSelectionMode(true);   // clear, stay in selection mode
+        } else {
+            adapter.selectAllVisible();
+        }
+    }
+
+    List<VideoItem> selectedVideos() {
+        Set<Long> ids = adapter.selectedIds();
+        List<VideoItem> out = new ArrayList<>();
+        for (VideoItem v : allVideos) if (ids.contains(v.id)) out.add(v);
+        return out;
+    }
+
+    private void moveSelectedToPrivate() {
+        List<VideoItem> vids = selectedVideos();
+        if (vids.isEmpty()) {
+            Toast.makeText(this, "Select some videos first", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        moveToPrivate.start(vids, this::exitSelection);
+    }
+
     // ---------------------------------------------------------------- clicks
 
     @Override
@@ -390,13 +505,10 @@ public class MainActivity extends AppCompatActivity implements LibraryAdapter.Li
     @Override
     public void onVideoLongClick(VideoItem item, View anchor) {
         if (item.id < 0) return;
-        android.widget.PopupMenu pm = new android.widget.PopupMenu(this, anchor);
-        pm.getMenu().add(0, 1, 0, R.string.move_to_private);
-        pm.setOnMenuItemClickListener(mi -> {
-            moveToPrivate.start(item);
-            return true;
-        });
-        pm.show();
+        // 1.4.0: long-press starts multi-select (tap more videos, then "Move to Private" once for all of them).
+        if (adapter.isSelectionMode()) adapter.toggle(item);
+        else enterSelection(item);
+        anchor.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS);
     }
 
     @Override
@@ -432,6 +544,11 @@ public class MainActivity extends AppCompatActivity implements LibraryAdapter.Li
 
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {
+        if (adapter != null && adapter.isSelectionMode()) {
+            getMenuInflater().inflate(R.menu.selection, menu);
+            searchItem = null;
+            return true;
+        }
         getMenuInflater().inflate(R.menu.main, menu);
         searchItem = menu.findItem(R.id.action_search);
         SearchView sv = (SearchView) searchItem.getActionView();
@@ -457,6 +574,11 @@ public class MainActivity extends AppCompatActivity implements LibraryAdapter.Li
 
     private void updateMenuState(Menu menu) {
         MenuItem viewMode = menu.findItem(R.id.action_view_mode);
+        if (viewMode == null) return;   // selection menu
+        MenuItem warn = menu.findItem(R.id.action_warn_private);
+        if (warn != null) warn.setChecked(Prefs.warnBeforePrivate(this));
+        MenuItem select = menu.findItem(R.id.action_select);
+        if (select != null) select.setVisible(tab != TAB_FOLDERS || openFolderId != null);
         viewMode.setIcon(grid ? R.drawable.ic_list : R.drawable.ic_grid);
         viewMode.setTitle(grid ? "List view" : "Grid view");
         int[] ids = {R.id.sort_date, R.id.sort_name, R.id.sort_size, R.id.sort_duration};
@@ -472,7 +594,23 @@ public class MainActivity extends AppCompatActivity implements LibraryAdapter.Li
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
         int id = item.getItemId();
-        if (id == R.id.action_view_mode) {
+        if (id == R.id.action_select_all) {
+            toggleSelectAll();
+            return true;
+        } else if (id == R.id.action_move_selected_private) {
+            moveSelectedToPrivate();
+            return true;
+        } else if (id == R.id.action_select) {
+            enterSelection(null);
+            return true;
+        } else if (id == R.id.action_warn_private) {
+            boolean on = !Prefs.warnBeforePrivate(this);
+            Prefs.setWarnBeforePrivate(this, on);
+            item.setChecked(on);
+            Toast.makeText(this, on ? "You'll be warned before videos move to Private"
+                    : "No warning before moving to Private", Toast.LENGTH_SHORT).show();
+            return true;
+        } else if (id == R.id.action_view_mode) {
             grid = !grid;
             Prefs.setGrid(this, grid);
             applyLayoutManager();
@@ -541,7 +679,7 @@ public class MainActivity extends AppCompatActivity implements LibraryAdapter.Li
                 msg = "Default is still " + status.appLabel + ". Clear its defaults first.";
                 break;
             default:
-                msg = "No default set. Pick Video Player, then tap Always.";
+                msg = "No default set. Pick " + getString(R.string.app_name) + ", then tap Always.";
                 break;
         }
         String mkv = status.mkvNote(this);

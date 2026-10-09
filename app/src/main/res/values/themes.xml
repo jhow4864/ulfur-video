@@ -1,24 +1,127 @@
 <resources>
-    <!-- Dark Material 3 theme. On Android 12+ DynamicColors overlays the wallpaper-based palette;
-         the colours below are the fallback for older devices. -->
-    <style name="Theme.VideoPlayer" parent="Theme.Material3.DynamicColors.Dark.NoActionBar">
+    <!-- Ulfur dark theme (Material 3). No DynamicColors: the Ulfur palette is the brand. -->
+    <style name="Theme.VideoPlayer" parent="Theme.Material3.Dark.NoActionBar">
         <item name="colorPrimary">@color/accent</item>
-        <item name="colorOnPrimary">#FF002F6B</item>
-        <item name="colorPrimaryContainer">#FF233A5E</item>
-        <item name="colorOnPrimaryContainer">#FFDDE7FF</item>
-        <item name="colorSecondary">#FFBCC7DC</item>
-        <item name="colorSecondaryContainer">#FF233A5E</item>
-        <item name="colorOnSecondaryContainer">#FFDDE7FF</item>
+        <item name="colorOnPrimary">@color/on_accent</item>
+        <item name="colorPrimaryContainer">@color/primary_container</item>
+        <item name="colorOnPrimaryContainer">@color/on_primary_container</item>
+        <item name="colorSecondary">@color/accent</item>
+        <item name="colorOnSecondary">@color/on_accent</item>
+        <item name="colorSecondaryContainer">@color/secondary_container</item>
+        <item name="colorOnSecondaryContainer">@color/on_primary_container</item>
+        <item name="colorTertiary">@color/accent_end</item>
+        <item name="colorAccent">@color/accent</item>
         <item name="colorSurface">@color/bg</item>
-        <item name="colorSurfaceContainerLowest">#FF08080A</item>
-        <item name="colorSurfaceContainerLow">#FF121216</item>
-        <item name="colorSurfaceContainer">@color/surface</item>
-        <item name="colorSurfaceContainerHigh">#FF1E1E23</item>
-        <item name="colorSurfaceContainerHighest">#FF28282E</item>
         <item name="colorOnSurface">@color/text_primary</item>
         <item name="colorOnSurfaceVariant">@color/text_secondary</item>
+        <item name="colorSurfaceVariant">@color/surface2</item>
+        <item name="colorSurfaceContainerLowest">@color/bg</item>
+        <item name="colorSurfaceContainerLow">@color/surface</item>
+        <item name="colorSurfaceContainer">@color/surface</item>
+        <item name="colorSurfaceContainerHigh">@color/surface2</item>
+        <item name="colorSurfaceContainerHighest">@color/surface3</item>
+        <item name="colorOutline">@color/stroke</item>
+        <item name="colorOutlineVariant">@color/stroke</item>
+        <item name="colorErrorContainer">@color/warn_bg</item>
+        <item name="colorOnErrorContainer">@color/text_primary</item>
         <item name="android:colorBackground">@color/bg</item>
         <item name="android:windowBackground">@color/bg</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@color/bg</item>
+        <item name="android:fontFamily">@font/inter_regular</item>
+        <item name="fontFamily">@font/inter_regular</item>
+        <item name="android:textColorHighlight">@color/selection_tint</item>
+        <item name="materialAlertDialogTheme">@style/ThemeOverlay.Ulfur.Dialog</item>
+        <item name="bottomSheetDialogTheme">@style/ThemeOverlay.Ulfur.BottomSheet</item>
+        <item name="actionModeBackground">@color/surface</item>
+        <item name="materialButtonStyle">@style/Widget.Ulfur.Button</item>
+        <item name="chipStyle">@style/Widget.Ulfur.Chip</item>
+        <item name="checkboxStyle">@style/Widget.Material3.CompoundButton.CheckBox</item>
+        <item name="popupMenuStyle">@style/Widget.Ulfur.PopupMenu</item>
+        <item name="android:popupMenuStyle">@style/Widget.Ulfur.PopupMenu</item>
+        <item name="toolbarStyle">@style/Widget.Ulfur.Toolbar</item>
+    </style>
+
+    <style name="ThemeOverlay.Ulfur.Dialog" parent="ThemeOverlay.Material3.MaterialAlertDialog">
+        <item name="colorSurface">@color/surface2</item>
+        <item name="colorSurfaceContainerHigh">@color/surface2</item>
+        <item name="shapeAppearanceCornerExtraLarge">@style/ShapeAppearance.Ulfur.Card</item>
+        <item name="materialAlertDialogTitleTextStyle">@style/Ulfur.DialogTitle</item>
+        <item name="buttonBarPositiveButtonStyle">@style/Widget.Ulfur.DialogButton</item>
+        <item name="buttonBarNegativeButtonStyle">@style/Widget.Ulfur.DialogButton.Muted</item>
+        <item name="buttonBarNeutralButtonStyle">@style/Widget.Ulfur.DialogButton.Muted</item>
+    </style>
+    <style name="Ulfur.DialogTitle" parent="MaterialAlertDialog.Material3.Title.Text">
+        <item name="android:fontFamily">@font/heading</item>
+        <item name="fontFamily">@font/heading</item>
+        <item name="android:letterSpacing">0.02</item>
+    </style>
+    <style name="Widget.Ulfur.DialogButton" parent="Widget.Material3.Button.TextButton.Dialog">
+        <item name="android:textColor">@color/accent_text</item>
+        <item name="android:fontFamily">@font/inter_semibold</item>
+    </style>
+    <style name="Widget.Ulfur.DialogButton.Muted">
+        <item name="android:textColor">@color/text_secondary</item>
+    </style>
+
+    <style name="ThemeOverlay.Ulfur.BottomSheet" parent="ThemeOverlay.Material3.BottomSheetDialog">
+        <item name="bottomSheetStyle">@style/Widget.Ulfur.BottomSheet</item>
+        <item name="android:navigationBarColor">@color/surface</item>
+    </style>
+    <style name="Widget.Ulfur.BottomSheet" parent="Widget.Material3.BottomSheet.Modal">
+        <item name="backgroundTint">@color/surface</item>
+    </style>
+
+    <style name="ShapeAppearance.Ulfur.Card" parent="">
+        <item name="cornerFamily">rounded</item>
+        <item name="cornerSize">20dp</item>
+    </style>
+
+    <style name="Widget.Ulfur.Button" parent="Widget.Material3.Button">
+        <item name="android:fontFamily">@font/inter_semibold</item>
+        <item name="android:letterSpacing">0.02</item>
+        <item name="cornerRadius">22dp</item>
+    </style>
+    <style name="Widget.Ulfur.Chip" parent="Widget.Material3.Chip.Filter">
+        <item name="chipBackgroundColor">@color/chip_bg</item>
+        <item name="chipStrokeColor">@color/chip_stroke</item>
+        <item name="chipStrokeWidth">1dp</item>
+        <item name="android:textColor">@color/chip_text</item>
+        <item name="checkedIconTint">@color/accent</item>
+        <item name="shapeAppearance">@style/ShapeAppearance.Ulfur.Chip</item>
+    </style>
+    <style name="ShapeAppearance.Ulfur.Chip" parent="">
+        <item name="cornerFamily">rounded</item>
+        <item name="cornerSize">12dp</item>
+    </style>
+    <style name="Widget.Ulfur.PopupMenu" parent="Widget.Material3.PopupMenu">
+        <item name="android:popupBackground">@drawable/bg_popup</item>
+    </style>
+    <style name="Widget.Ulfur.Toolbar" parent="Widget.Material3.Toolbar">
+        <item name="titleTextAppearance">@style/TextAppearance.Ulfur.Title</item>
+    </style>
+    <style name="TextAppearance.Ulfur.Title" parent="TextAppearance.Material3.TitleLarge">
+        <item name="android:fontFamily">@font/heading</item>
+        <item name="fontFamily">@font/heading</item>
+        <item name="android:letterSpacing">0.06</item>
+        <item name="android:textSize">22sp</item>
+        <item name="android:textColor">@color/text_primary</item>
+    </style>
+    <!-- Ulfur section label: spaced caps, like "SPEED DIAL" / "ULFUR SHIELDS" in the browser -->
+    <style name="TextAppearance.Ulfur.Label" parent="TextAppearance.Material3.LabelMedium">
+        <item name="android:fontFamily">@font/inter_semibold</item>
+        <item name="android:letterSpacing">0.12</item>
+        <item name="android:textAllCaps">true</item>
+        <item name="android:textSize">11sp</item>
+        <item name="android:textColor">@color/text_secondary</item>
+    </style>
+
+    <style name="TextAppearance.Ulfur.Tab" parent="TextAppearance.Material3.TitleSmall">
+        <item name="android:fontFamily">@font/inter_semibold</item>
+        <item name="fontFamily">@font/inter_semibold</item>
+        <item name="android:letterSpacing">0.04</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:textSize">15sp</item>
     </style>
 
     <style name="Theme.VideoPlayer.Player" parent="Theme.VideoPlayer">

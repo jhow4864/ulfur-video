@@ -4,6 +4,7 @@
     android:padding="3dp">
 
     <FrameLayout
+        android:id="@+id/thumb_frame"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:background="@drawable/bg_thumb"
@@ -45,5 +46,23 @@
             android:paddingEnd="5dp"
             android:textColor="#FFFFFFFF"
             android:textSize="11sp"/>
+
+        <View
+            android:id="@+id/selection_overlay"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@drawable/bg_selected"
+            android:visibility="gone"/>
+
+        <ImageView
+            android:id="@+id/select_check"
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:layout_gravity="top|start"
+            android:layout_margin="7dp"
+            android:padding="3dp"
+            android:background="@drawable/bg_check_off"
+            android:importantForAccessibility="no"
+            android:visibility="gone"/>
     </FrameLayout>
 </FrameLayout>

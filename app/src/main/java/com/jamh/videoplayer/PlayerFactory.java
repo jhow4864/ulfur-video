@@ -131,7 +131,7 @@ public final class PlayerFactory {
                 .setMediaCodecSelector(codecSelector(preferSoftwareVideo));
 
         DefaultHttpDataSource.Factory http = new DefaultHttpDataSource.Factory()
-                .setUserAgent("VideoPlayer/1.0 (Android) Media3")
+                .setUserAgent("UlfurVideo/1.4 (Android) Media3")
                 .setAllowCrossProtocolRedirects(true)
                 .setConnectTimeoutMs(15_000)
                 .setReadTimeoutMs(20_000);

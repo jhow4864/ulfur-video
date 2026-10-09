@@ -1,6 +1,7 @@
-# Video Player (com.jamh.videoplayer)
+# Ulfur Video (formerly Video Player, package com.jamh.videoplayer)
 
-Build: `source /home/box/android-tools/env.sh && ./gradlew assembleDebug` → app/build/outputs/apk/debug/app-debug.apk (copied to VideoPlayer.apk)
+Release (1.4.0+): `./gradlew assembleRelease -Pulfur.keystoreProperties=/path/to/keystore.properties` (see "Signing" below).
+Debug build: `source /home/box/android-tools/env.sh && ./gradlew assembleDebug` → app/build/outputs/apk/debug/app-debug.apk (copied to VideoPlayer.apk)
 Previews/smoke test: `./gradlew testDebugUnitTest` (Robolectric, writes previews/*.png)
 
 - Media3 1.9.4 (exoplayer, -hls, -dash, -ui) + org.jellyfin.media3:media3-ffmpeg-decoder:1.9.0+1 (prebuilt FFmpeg audio, GPLv3)
@@ -44,3 +45,27 @@ Previews/smoke test: `./gradlew testDebugUnitTest` (Robolectric, writes previews
   The lock icon opens the screen after BiometricPrompt (BIOMETRIC_WEAK | DEVICE_CREDENTIAL). It re-locks when the app goes to the background.
   FLAG_SECURE is set on the vault screen and on private playback. Private playback has no resume points, shortcuts, PiP or background audio, and thumbnails stay in memory.
   The vault is excluded from backup and device transfer. The screen shows storage used and warns that uninstalling or clearing data deletes the videos. "Move out" copies to Movies/VideoPlayer. Not encrypted.
+
+## v1.4.0 (versionCode 6): Ulfur Video
+- **Rebrand**: the app is now "Ulfur Video" (launcher label, toolbar, dialogs, share target, notifications). Same package
+  (`com.jamh.videoplayer`) and same signing key, so it installs as an update over Video Player 1.3.0 and keeps the private videos.
+  New clips/GIFs and "Move out" now go to Movies/UlfurVideo (Pictures/UlfurVideo for GIFs); files already in Movies/VideoPlayer stay where they are.
+- **Ulfur look**: the Ulfur browser's night tokens (bg #0E0E12, surfaces #16161C/#1C1C24/#25252F, stroke #2C2C37, text #F2F2F7/#A0A0AE)
+  and its default Blood Moon accent (#FF2D55 -> #F72FA0 -> #E040FB gradient, wolf eye #FF7A9A). DynamicColors (wallpaper colours) removed.
+  Inter for text, Chakra Petch SemiBold for titles (both OFL, licences in assets/licenses), spaced-caps section labels with the accent bar,
+  20dp cards / 14dp thumbnails / gradient pill buttons, gradient tab indicator and resume bar. The private screen uses Ulfur's private-mode purple.
+- **New logo**: Blood Moon play triangle with the Ulfur howling wolf (the 2.7.1 logo's wolf) and pink eye, on the Ulfur icon background.
+  Adaptive icon (foreground/background/monochrome themed icon) + legacy PNGs; `ic_app_mark` in the toolbar and empty state.
+- **Multi-select**: long-press a video (Videos, inside a folder, or Clips; grid and list) to start selecting; tap to toggle; Select all;
+  "N selected" in the toolbar; bulk "Move N to Private" (bottom bar or the lock action). Overflow "Select videos" also starts it.
+  Private videos screen: the same multi-select with bulk "Move out of Private" and bulk "Delete permanently".
+- **One warning per move**: the Move to Private warning is shown once for the whole batch with a "Don't ask me again" box
+  (`Prefs.warnBeforePrivate`, SharedPreferences "settings"/`warn_before_private`). Overflow menu "Warn before moving to Private" turns it back on.
+  Android 11+ asks once (one system delete request for the whole batch); Android 10 still asks per video (platform limit).
+- Tests: `V14FeatureTest` (multi-select grid/list/clips, bulk warning + don't-ask-again persistence + menu toggle, vault multi-select). Previews go to `previews/`.
+
+## Signing
+1.3.0 and earlier were signed with the build box's `~/.android/debug.keystore` (CN=Android Debug,
+SHA-256 1f94113ddeec8369736e0c9825245411f0467c9c8f55214ba827694cca3509e4). Updates must use the same key.
+`app/build.gradle` reads the key from a properties file outside the repo (storeFile, storePassword, keyAlias, keyPassword)
+given with `-Pulfur.keystoreProperties=...` or `ULFUR_VIDEO_KEYSTORE_PROPERTIES`. Back that keystore up: without it no update can be installed in place.
