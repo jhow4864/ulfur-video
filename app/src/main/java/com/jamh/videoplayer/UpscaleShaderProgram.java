@@ -104,7 +104,15 @@ final class UpscaleShaderProgram extends BaseGlShaderProgram {
             throw new VideoFrameProcessingException(e);
         }
         mode = routed;
-        timer = useHdr || effect.frameTimes == null ? null : new GpuFrameTimer(effect.frameTimes);
+        GpuFrameTimer t = null;
+        if (!useHdr && effect.frameTimes != null) {
+            try {
+                t = new GpuFrameTimer(effect.frameTimes);
+            } catch (Throwable e) { // timing is diagnostics only: never let it take playback down
+                android.util.Log.w("UpscaleShaderProgram", "GPU frame timer unavailable", e);
+            }
+        }
+        timer = t;
     }
 
     private static GlProgram program(Context context, String fragment) throws IOException, GlUtil.GlException {
